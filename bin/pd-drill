@@ -225,7 +225,7 @@ count=$(wc -l <"$SCRATCH/index")
 (( count > 0 )) || fail "$NAME is an empty archive"
 say "  $count entries, all readable"
 
-awk '{ n = $0; sub(/^([^ ]+ +){5}/, "", n); print n }' "$SCRATCH/index" >"$SCRATCH/members"
+awk '{ n = $0; sub(/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +/, "", n); print n }' "$SCRATCH/index" >"$SCRATCH/members"
 for p in "${SET_REQUIRE[@]}"; do
     grep -qF -- "$p" "$SCRATCH/members" || fail "required path missing from $NAME: $p"
 done
@@ -237,7 +237,7 @@ done
     say "  ${#SET_REQUIRE[@]} required paths present, ${#SET_FORBID[@]} forbidden patterns absent"
 
 # 4. get files back out. GNU tar -tv lines: perms owner size date time name.
-awk '$1 ~ /^-/ && $3 > 0 { n = $0; sub(/^([^ ]+ +){5}/, "", n); print $3 "\t" n }' \
+awk '$1 ~ /^-/ && $3 > 0 { n = $0; sub(/^[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +[^ ]+ +/, "", n); print $3 "\t" n }' \
     "$SCRATCH/index" | shuf -n "$DRILL_SAMPLE" >"$SCRATCH/sample"
 if [[ -s $SCRATCH/sample ]]; then
     mkdir -p "$SCRATCH/out"

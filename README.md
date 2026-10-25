@@ -5,9 +5,14 @@ Automatic, encrypted backups of a Linux folder to Proton Drive, using the
 daily, keeps a set of older copies, warns you when something is wrong, and tests
 that the backups actually restore.
 
+**Unofficial.** A personal project, not made, endorsed or supported by Proton AG.
+"Proton" and "Proton Drive" are Proton AG's trademarks. Problems with the CLI itself go
+to Proton; problems with this kit go to this repo's issues.
+
 > **Written by AI.** An LLM coding agent wrote this code at my direction. It is a
 > generic version of the setup I run every day. I reviewed it, but I did not write
-> it by hand. Read it before you trust it with your data.
+> it by hand. I run it daily on Kubuntu 26.04 and tested it on a fresh install, with
+> CLI 0.9.0. Read it before you trust it with your data.
 
 **Download:** [the latest release](https://github.com/green-wanderer/proton-drive-backup-kit/releases/latest),
 then *Source code (zip)*. **Support:** shared as-is. I run it every day and fix what
@@ -238,6 +243,8 @@ menu: the same actions, with the folders as one flat list.
 ## Details
 
 - **One per day.** The daily tier keeps the newest archive of each day.
+- **While logged out,** backups keep running locally, and `keep_local` still removes the
+  oldest local copies. When you log in again, only the newest archive is pushed.
 - **Safety limits.** `pd-prune` refuses `keep = 0 0 0 0` and stops if one run would
   trash more than `prune_max` files. `pd-prune --dry-run SET` shows every decision.
 - **Upload checks.** Success means Drive reports the right size, not just that the

@@ -1,5 +1,12 @@
 # Changelog
 
+## 1.0.1 (2026-10-25)
+
+- README: states that this is an unofficial project, not affiliated with Proton, and
+  how it was tested; notes that only the newest archive is pushed after a logout.
+- `pd-drill` works with older `mawk` (Debian 12 and others), which lacks `{5}` in regexes.
+- `pd-init` and the example home set leave out the CLI's saved login.
+
 ## 1.0.0 (2026-10-25)
 
 - `install.sh`, `pd-init` (guided setup), `pd-doctor` (what is missing and how to fix it),

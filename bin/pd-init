@@ -63,7 +63,8 @@ SOURCE=$(readlink -f -- "$SOURCE") || die "no such folder"
 EXCLUDES=()
 if [[ $SOURCE == "$HOME" ]]; then
     EXCLUDES=(./.cache ./.local/share/Trash ./.local/share/Steam ./.local/share/flatpak
-              ./.local/state/pd-backup ./snap ./Downloads)
+              ./.local/state/pd-backup ./snap ./Downloads
+              ./.local/share/proton-drive-cli ./.local/state/proton-drive-cli)
 fi
 
 # 4. encryption
