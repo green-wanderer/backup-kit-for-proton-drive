@@ -1,0 +1,170 @@
+#!/usr/bin/env bash
+# pd-init - set up a backup in a few questions: keys, config, first backup, daily timer.
+#
+# Usage: pd-init [SET [SOURCE]]
+#
+# SET is the backup's name (default: home), SOURCE the folder (default: ~ for home).
+# Each step asks first; Enter takes the default shown in [brackets].
+# Writes ~/.config/pd-backup/sets/SET.conf, which you can edit afterwards.
+
+PROG=pd-init
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+
+[[ -t 0 ]] || die "run this in a terminal; it asks questions"
+
+ask() { # PROMPT DEFAULT -> answer
+    local r
+    read -rp "$1 [$2] " r
+    printf '%s\n' "${r:-$2}"
+}
+yes_no() { # PROMPT DEFAULT(y|n) -> 0 for yes
+    local r
+    read -rp "$1 [$( [[ $2 == y ]] && echo Y/n || echo y/N )] " r
+    r=${r:-$2}
+    [[ $r == [yY]* ]]
+}
+step() { printf '\n== %s\n' "$*"; }
+
+# 1. tools
+step "Checking tools"
+if ! "$HERE/pd-doctor" --tools; then
+    say $'\n'"Install what is marked FIX above, then run pd-init again."
+    exit 1
+fi
+
+# 2. login
+step "Proton Drive login"
+if drive_ready; then
+    say "Logged in."
+else
+    say "You need to log in once. A browser window will open."
+    read -rp "Press Enter to log in... " _
+    "$HERE/pd-session" || die "the login did not work. Run pd-init again to retry"
+    say "Logged in."
+fi
+
+# 3. what to back up
+step "What to back up"
+SET=${1:-$(ask "Name for this backup (letters, digits, -):" home)}
+[[ $SET =~ ^[A-Za-z0-9-]+$ ]] || die "'$SET' is not a valid name (letters, digits, -)"
+CONF="$CONF_DIR/sets/$SET.conf"
+[[ -e $CONF ]] && die "$SET already exists: $CONF. Edit it, or pick another name"
+
+def=~; [[ $SET == home ]] || def=""
+SOURCE=${2:-$(ask "Folder to back up:" "${def:-~/Documents}")}
+[[ $SOURCE == "~" || $SOURCE == "~/"* ]] && SOURCE="$HOME${SOURCE#\~}"
+SOURCE=$(readlink -f -- "$SOURCE") || die "no such folder"
+[[ -d $SOURCE ]] || die "$SOURCE is not a folder"
+[[ -n $(find "$SOURCE" -mindepth 1 -print -quit) ]] || die "$SOURCE is empty"
+
+# Common clutter, left out of a home folder backup.
+EXCLUDES=()
+if [[ $SOURCE == "$HOME" ]]; then
+    EXCLUDES=(./.cache ./.local/share/Trash ./.local/share/Steam ./.local/share/flatpak
+              ./.local/state/pd-backup ./snap ./Downloads)
+fi
+
+# 4. encryption
+step "Encryption"
+say "Proton encrypts everything on Drive. A key of your own adds a second lock:"
+say "even someone in your Proton account cannot open the backups. If you lose"
+say "the key, nobody can open them, you included."
+KEYFILE="" PUBFILE=""
+if yes_no "Encrypt with your own key?" y; then
+    KEYFILE="$CONF_DIR/$SET.key" PUBFILE="$CONF_DIR/$SET.pub"
+    mkdir -p "$CONF_DIR"
+    if [[ -e $KEYFILE ]]; then
+        say "Using the existing key $KEYFILE"
+    else
+        ( umask 077; age-keygen -o "$KEYFILE" 2>/dev/null ) || die "age-keygen failed"
+    fi
+    age-keygen -y "$KEYFILE" >"$PUBFILE" || die "cannot read $KEYFILE"
+fi
+
+# 5. how many copies
+step "How many copies to keep on Drive"
+say "Measuring $SOURCE..."
+du_ex=()
+for x in "${EXCLUDES[@]}"; do du_ex+=("--exclude=$SOURCE/${x#./}"); done
+bytes=$(timeout 300 du -sbx "${du_ex[@]}" "$SOURCE" 2>/dev/null | cut -f1)
+if [[ $bytes =~ ^[0-9]+$ ]]; then
+    say "About $(numfmt --to=iec "$bytes") before compression. Every copy is a full copy."
+    say "  1) standard: up to 18 copies (7 days, 4 weeks, 6 months, 1 year), about $(numfmt --to=iec $((bytes * 18)))"
+    say "  2) light:    up to 6 copies  (3 days, 2 weeks, 1 month),           about $(numfmt --to=iec $((bytes * 6)))"
+else
+    say "  1) standard: up to 18 copies (7 days, 4 weeks, 6 months, 1 year)"
+    say "  2) light:    up to 6 copies  (3 days, 2 weeks, 1 month)"
+fi
+used=$(timeout "$LIST_TIMEOUT" proton-drive filesystem size -j "$DRIVE_ROOT" </dev/null 2>/dev/null | jq -r '.size // empty' 2>/dev/null)
+[[ $used =~ ^[0-9]+$ ]] && say "Your Drive files use $(numfmt --to=iec "$used") now, trash included."
+KEEP="7 4 6 1"
+[[ $(ask "Choose 1 or 2:" 1) == 2 ]] && KEEP="3 2 1 0"
+
+# 6. write the config
+mkdir -p "$CONF_DIR/sets"
+{
+    printf '# Made by pd-init on %s. Every key is explained in the README.\n\n' "$(date +%F)"
+    printf 'source = %s\n' "$SOURCE"
+    for x in "${EXCLUDES[@]}"; do printf 'exclude = %s\n' "$x"; done
+    printf 'drive  = %s/backups/%s\n' "$DRIVE_ROOT" "$SET"
+    [[ -n $KEYFILE ]] && printf 'recipients = %s\nidentity   = %s\n' "$PUBFILE" "$KEYFILE"
+    printf 'keep   = %s\n' "$KEEP"
+} >"$CONF"
+step "Saved $CONF"
+
+# 7. the key, off this machine
+if [[ -n $KEYFILE ]]; then
+    step "Save your key somewhere else"
+    say "If this computer dies, you need this key to open your backups. It is the file"
+    say "  $KEYFILE"
+    say "Copy that file to a USB stick, or put its text in your password manager."
+    if yes_no "Show the text here, to copy it?" y; then
+        printf '\n'; cat -- "$KEYFILE"; printf '\n'
+    fi
+    yes_no "Saved a copy somewhere other than this computer?" n ||
+        say "Do it soon. Without a copy, losing this computer means losing the backups."
+fi
+
+# 8. first backup and test restore
+step "First backup"
+if yes_no "Back up now and test a restore? (can take a while)" y; then
+    "$HERE/pd-backup" "$SET" || die "the backup failed; see above, then: pd-backup $SET"
+    if ! "$HERE/pd-drill" --yes "$SET"; then
+        say $'\n'"The backup was made, but the test restore FAILED (the reason is above),"
+        say "so this backup is not proven to open yet. Try again later with: pd-drill $SET"
+        say "pd-check keeps showing it until a test restore passes."
+        yes_no "Carry on with the setup anyway?" y || exit 1
+    fi
+fi
+
+# 9. every day
+step "Daily backups"
+UNITS="$HOME/.config/systemd/user"
+if command -v systemctl >/dev/null && yes_no "Back up automatically every day?" y; then
+    mkdir -p "$UNITS"
+    for u in pd-backup@.service pd-backup@.timer pd-check.service pd-check.timer; do
+        [[ -e $UNITS/$u ]] || cp "$HERE/../examples/systemd/$u" "$UNITS/"
+    done
+    systemctl --user daemon-reload
+    systemctl --user enable --now "pd-backup@$SET.timer" pd-check.timer >/dev/null 2>&1 &&
+        say "On. A desktop notification tells you if a backup needs attention." ||
+        say "Could not turn on the timer. Try: systemctl --user enable --now pd-backup@$SET.timer"
+fi
+
+# 10. warnings in the terminal
+rc=""
+case ${SHELL##*/} in zsh) rc=~/.zshrc ;; bash) rc=~/.bashrc ;; esac
+if [[ -n $rc ]] && ! grep -qs 'pd-check' "$rc" &&
+   yes_no "Show backup warnings when you open a terminal?" y; then
+    printf '\n# pd-kit: backup warnings, silent when all is well\ncommand -v pd-check >/dev/null && pd-check\n' >>"$rc"
+    say "Added to $rc"
+fi
+
+step "All set"
+"$HERE/pd-check"
+say "pd-check            anything that needs attention (silent when all is well)"
+say "pd-restore $SET --list    your backups; pd-restore -h to get files back"
+say "pd-doctor           if something seems wrong"
+exit 0

@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# pd-session - log in to Proton Drive, prove the session works, list paused pushes.
+#
+# Usage: pd-session            log in, check, then list sets waiting on a push
+#        pd-session --check    check only: silent, exit 0 if Drive answers, 1 if not
+#        pd-session --status   check and list, without logging in
+#
+# `proton-drive auth login` finishing is not proof the session works, so this
+# lists the drive root afterwards, the same way every pd-* script checks before it
+# touches Drive. --check is that check on its own, for your own scripts.
+
+PROG=pd-session
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+
+case $1 in
+    --check)  drive_ready; exit $? ;;
+    --status) ;;
+    "")       command -v proton-drive >/dev/null || die "the Proton Drive CLI is not installed: $CLI_URL"
+              proton-drive auth login || die "login did not complete"
+              # A new session can take a few seconds before Drive answers.
+              say "Checking the login..."
+              for _ in 1 2 3 4 5; do drive_ready && break; sleep 6; done ;;
+    *)        die "unknown option $1 (try -h)" ;;
+esac
+
+if ! drive_ready; then
+    say "Proton Drive is NOT reachable. Run pd-session to log in, or check the network."
+    exit 1
+fi
+say "Proton Drive is reachable."
+
+waiting=0
+for s in $(list_sets); do
+    read_status "$s"
+    case $ST_push in
+        PENDING|UNKNOWN)
+            (( waiting++ )) || say $'\nWaiting on a push:'
+            say "  $s: ${ST_archive:-?} ($ST_message)"
+            say "      pd-backup --push-only $s" ;;
+    esac
+done
+(( waiting )) || say "No pushes outstanding."
+exit 0

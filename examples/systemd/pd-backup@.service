@@ -1,0 +1,17 @@
+# Runs one set: pd-backup@home.service backs up sets/home.conf.
+# Install: copy to ~/.config/systemd/user/, then
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now pd-backup@home.timer
+[Unit]
+Description=Back up %i to Proton Drive
+
+[Service]
+Type=oneshot
+# For a database set, dump first. One way, as a drop-in for that set only:
+#   systemctl --user edit pd-backup@postgres.service
+#   [Service]
+#   ExecStartPre=/bin/sh -c 'pg_dump mydb > %h/dumps/postgres/mydb.sql'
+ExecStart=%h/.local/bin/pd-backup %i
+Nice=10
+IOSchedulingClass=idle
+TimeoutStartSec=4h

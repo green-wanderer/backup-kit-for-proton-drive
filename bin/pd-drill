@@ -1,0 +1,273 @@
+#!/usr/bin/env bash
+# pd-drill - restore a backup, to prove that you can.
+#
+# Usage: pd-drill [--oldest|--newest] [--local|--mirror] [--keep] [--yes] [SET]
+#        pd-drill --status     one line per set: ok, due, FAIL, never or off
+#
+# With no SET, drills the set that has gone longest without a passing drill.
+# It downloads one archive from Proton Drive, decodes it by its extensions (.age
+# with the set's identity key, .zst, .gz, .xz) and reads it end to end. Which one
+# is drill_pick (oldest unless set); --oldest or --newest overrides it for one run.
+#
+# For a tar it then checks require = and forbid =, and restores a random sample
+# of files at the sizes tar recorded. With check = it extracts everything and
+# runs that command inside the restored tree; exit 0 passes. pd-check keeps the
+# result and nags after drill_days.
+#
+# A set with push = no is drilled from its mirror, or its local folder if it
+# has no mirror. --local and --mirror drill those copies instead of the usual
+# one; a pass there is recorded but does not reset the drill_days clock.
+#
+#   --keep     leave the download and sample in CACHE_DIR/drill to look at
+#   --yes      do not ask before a download over drill_confirm_mb
+#
+# Exit: 0 passed, 1 failed, 2 bad usage, 3 you declined the download.
+
+PROG=pd-drill
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+set -o pipefail
+
+WORK="$CACHE_DIR/drill"
+PICK="" KEEP=0 YES=0 SET="" FROM=""
+for a in "$@"; do
+    case $a in
+        --oldest) PICK=oldest ;;
+        --newest) PICK=newest ;;
+        --local)  FROM=local ;;
+        --mirror) FROM=mirror ;;
+        --keep)   KEEP=1 ;;
+        --yes)    YES=1 ;;
+        --status)
+            # state: off (drill_days = 0), FAIL, never, due (past drill_days) or ok
+            for s in $(list_sets); do
+                load_set "$s" || continue
+                read_drill "$s"
+                since=$(days_since "$DR_passed")
+                if (( SET_DRILL_DAYS == 0 )); then st=off
+                elif [[ $DR_result == FAIL ]]; then st=FAIL
+                elif [[ -z $since ]]; then st=never
+                elif (( since >= SET_DRILL_DAYS )); then st=due
+                else st=ok; fi
+                printf '%-12s %-5s %-10s %-7s %s\n' "$s" "$st" \
+                    "${DR_passed:+$(date -d "@$DR_passed" '+%F')}" "${DR_source:-}" "${DR_archive:-}"
+            done
+            exit 0 ;;
+        -*) die "unknown option $a (try -h)" ;;
+        *)  SET=$a ;;
+    esac
+done
+
+if [[ -z $SET ]]; then
+    best=-1
+    for s in $(list_sets); do
+        load_set "$s" && (( SET_DRILL_DAYS > 0 )) || continue
+        read_drill "$s"
+        age=$(days_since "$DR_passed"); age=${age:-99999}
+        (( age > best )) && { best=$age; SET=$s; }
+    done
+    [[ -n $SET ]] || die "no backup sets in $CONF_DIR/sets/"
+fi
+load_set "$SET" || die "$LOAD_ERR"
+
+# The copy whose pass resets the clock: the one you would restore from.
+USUAL=drive
+if [[ $SET_PUSH == no ]]; then
+    USUAL=local
+    [[ -n $SET_MIRROR ]] && USUAL=mirror
+fi
+FROM=${FROM:-$USUAL}
+say "Drilling $SET from its $FROM copy"
+
+record() { # PASS|FAIL MESSAGE
+    set -- "$1" "${2//$'\n'/ }"
+    read_drill "$SET"
+    [[ $1 == PASS && $FROM == "$USUAL" ]] && DR_passed=$(date +%s)
+    mkdir -p "$STATE_DIR"
+    printf 'result=%s\ntime=%s\npassed=%s\narchive=%s\nsource=%s\nmessage=%s\n' \
+        "$1" "$(date +%s)" "$DR_passed" "${NAME:-}" "$FROM" "$2" >"$STATE_DIR/$SET.drill"
+}
+
+fail() {
+    say "FAIL: $1"
+    record FAIL "$1"
+    notify critical "Restore drill FAILED: $SET" "$1"
+    exit 1
+}
+
+# Problems with this machine, not the backup: no drill result is recorded.
+abort() { say "Not drilled: $1"; exit 1; }
+
+command -v tar >/dev/null || abort "tar is not installed"
+
+# 1. pick the archive
+case $FROM in
+    drive)
+        [[ $SET_PUSH == yes ]] || abort "$SET has push = no; try --local or --mirror"
+        command -v jq >/dev/null || abort "jq is not installed"
+        drive_ready || abort "Proton Drive is not reachable. Run pd-session first."
+        listing=$(drive_ls "$SET_DRIVE") || fail "could not list $SET_DRIVE: no off-site copy found"
+        RE=$(archive_re "$SET")
+        mapfile -t found < <(grep -P '^file\t' <<<"$listing" | cut -f2,3 | sort -t$'\t' -k2 |
+            while IFS=$'\t' read -r sz n; do [[ $n =~ $RE ]] && printf '%s\t%s\n' "$sz" "$n"; done) ;;
+    local|mirror)
+        DIR=$SET_LOCAL
+        if [[ $FROM == mirror ]]; then
+            [[ -n $SET_MIRROR ]] || abort "$SET has no mirror ="
+            mirror_root "$SET_MIRROR" >/dev/null || abort "the mirror is not mounted (no .pd-mirror marker above $SET_MIRROR)"
+            DIR=$SET_MIRROR
+        fi
+        mapfile -t found < <(local_archives "$DIR" "$SET" | while IFS= read -r n; do
+            printf '%s\t%s\n' "$(stat -c %s "$DIR/$n")" "$n"; done) ;;
+esac
+(( ${#found[@]} )) || fail "no archives of $SET in its $FROM copy"
+# The oldest is the default because it is the one most likely to have rotted,
+# and the one you would reach for after a mistake you noticed late.
+PICK=${PICK:-$SET_DRILL_PICK}
+[[ $PICK == newest ]] && pick=${found[-1]} || pick=${found[0]}
+SIZE=${pick%%$'\t'*} NAME=${pick#*$'\t'}
+say "  ${#found[@]} archives; drilling the $PICK: $NAME"
+
+# Layers from the outside in, read off the extensions.
+LAYERS=() base=$NAME
+while :; do
+    case $base in
+        *.age) LAYERS+=(age);  base=${base%.age} ;;
+        *.zst) LAYERS+=(zstd); base=${base%.zst} ;;
+        *.gz)  LAYERS+=(gzip); base=${base%.gz} ;;
+        *.xz)  LAYERS+=(xz);   base=${base%.xz} ;;
+        *) break ;;
+    esac
+done
+IS_TAR=0; [[ $base == *.tar ]] && IS_TAR=1
+for t in "${LAYERS[@]}"; do command -v "$t" >/dev/null || abort "$t is not installed"; done
+if [[ " ${LAYERS[*]} " == *" age "* ]]; then
+    [[ -n $SET_IDENTITY ]] || fail "$NAME is encrypted but the set has no identity = line"
+    [[ -r $SET_IDENTITY ]] || fail "cannot read the identity key $SET_IDENTITY"
+fi
+(( IS_TAR )) || (( ${#SET_REQUIRE[@]} + ${#SET_FORBID[@]} == 0 )) ||
+    fail "$NAME is not a tar, so its require = and forbid = paths cannot be checked"
+
+# 2. fetch it
+mkdir -p "$WORK" || abort "cannot create $WORK"
+SCRATCH=$(mktemp -d "$WORK/$SET.XXXXXX") || abort "cannot create a scratch folder"
+(( KEEP )) || trap 'rm -rf -- "${SCRATCH:?}"' EXIT
+
+if [[ $FROM == drive ]]; then
+    if [[ $SIZE =~ ^[0-9]+$ ]]; then
+        free=$(df -Pk "$WORK" | awk 'NR==2 {print $4 * 1024}')
+        (( free > SIZE + DRILL_SPARE_MB * 1048576 )) || abort "not enough space in $WORK for $((SIZE / 1048576)) MB"
+        if (( SIZE > DRILL_CONFIRM_MB * 1048576 && ! YES )) && [[ -t 0 ]]; then
+            read -rp "  $NAME is $((SIZE / 1048576)) MB. Download it? [y/N] " r
+            [[ $r == [yY]* ]] || { say "  nothing drilled"; exit 3; }
+        fi
+    fi
+    say "  downloading..."
+    timeout "$DRILL_TIMEOUT" proton-drive filesystem download "$SET_DRIVE/$NAME" "$SCRATCH" </dev/null >/dev/null 2>&1 ||
+        fail "download of $NAME failed"
+    FILE="$SCRATCH/$NAME"
+    [[ -f $FILE ]] || fail "download said it worked but $NAME is not there"
+    [[ $SIZE =~ ^[0-9]+$ && $(stat -c %s "$FILE") != "$SIZE" ]] &&
+        fail "downloaded $(stat -c %s "$FILE") bytes, Drive says $SIZE"
+else
+    FILE="$DIR/$NAME"    # read in place, never written
+fi
+
+# The archive with every layer peeled off. Each layer's exit code goes to
+# SCRATCH/rc.N, so a failure can say which layer broke, even a silent one.
+# No cat at the end of the chain: some coreutils builds fail it pipe to pipe.
+layer() { # INDEX
+    case ${LAYERS[$1]} in
+        age)  age -d -i "$SET_IDENTITY" ;;
+        zstd) zstd -dqc ;;
+        gzip) gzip -dc ;;
+        xz)   xz -dc ;;
+    esac
+}
+peel() { # INDEX
+    local i=$1
+    if (( i == ${#LAYERS[@]} - 1 )); then
+        ( layer "$i"; r=$?; echo $r >"$SCRATCH/rc.$i"; exit $r )
+    else
+        ( layer "$i"; r=$?; echo $r >"$SCRATCH/rc.$i"; exit $r ) | peel $((i + 1))
+    fi
+}
+stream() {
+    rm -f -- "$SCRATCH"/rc.*
+    if (( ${#LAYERS[@]} )); then peel 0 <"$FILE"; else cat -- "$FILE"; fi
+}
+
+# why LAST_NAME LAST_RC -> "age=0 zstd=0 tar=2: the first error line"
+why() {
+    local s="" i e r
+    for i in "${!LAYERS[@]}"; do r='?'; [[ -s $SCRATCH/rc.$i ]] && r=$(<"$SCRATCH/rc.$i"); s+="${LAYERS[i]}=$r "; done
+    s+="$1=$2"
+    e=$(grep -m1 -v '^[[:space:]]*$' "$SCRATCH/err" 2>/dev/null)
+    printf '%s%s' "$s" "${e:+: $e}"
+}
+
+if (( ! IS_TAR )); then
+    say "  reading the whole file..."
+    bytes=$(stream 2>"$SCRATCH/err" | wc -c) ||
+        { cat "$SCRATCH/err"; fail "could not read $NAME end to end ($(why wc "?"))"; }
+    (( bytes > 0 )) || fail "$NAME decodes to nothing"
+    record PASS "$bytes bytes, readable end to end"
+    say "PASS: $SET restores from its $FROM copy ($NAME, $bytes bytes)."
+    exit 0
+fi
+
+# 3. read every byte. A truncated upload or a wrong key fails here.
+say "  reading the whole archive..."
+stream 2>"$SCRATCH/err" | tar --quoting-style=literal -tvf - >"$SCRATCH/index" 2>>"$SCRATCH/err" ||
+    { rc=${PIPESTATUS[-1]}; cat "$SCRATCH/err"; fail "could not read $NAME end to end ($(why tar "$rc"))"; }
+count=$(wc -l <"$SCRATCH/index")
+(( count > 0 )) || fail "$NAME is an empty archive"
+say "  $count entries, all readable"
+
+awk '{ n = $0; sub(/^([^ ]+ +){5}/, "", n); print n }' "$SCRATCH/index" >"$SCRATCH/members"
+for p in "${SET_REQUIRE[@]}"; do
+    grep -qF -- "$p" "$SCRATCH/members" || fail "required path missing from $NAME: $p"
+done
+for p in "${SET_FORBID[@]}"; do
+    hit=$(grep -F -m3 -- "$p" "$SCRATCH/members") &&
+        fail "forbidden path in $NAME ($p): $(tr '\n' ' ' <<<"$hit")- delete that archive"
+done
+(( ${#SET_REQUIRE[@]} + ${#SET_FORBID[@]} )) &&
+    say "  ${#SET_REQUIRE[@]} required paths present, ${#SET_FORBID[@]} forbidden patterns absent"
+
+# 4. get files back out. GNU tar -tv lines: perms owner size date time name.
+awk '$1 ~ /^-/ && $3 > 0 { n = $0; sub(/^([^ ]+ +){5}/, "", n); print $3 "\t" n }' \
+    "$SCRATCH/index" | shuf -n "$DRILL_SAMPLE" >"$SCRATCH/sample"
+if [[ -s $SCRATCH/sample ]]; then
+    mkdir -p "$SCRATCH/out"
+    cut -f2 "$SCRATCH/sample" >"$SCRATCH/names"
+    : >"$SCRATCH/err"
+    stream 2>>"$SCRATCH/err" | tar -xf - -C "$SCRATCH/out" --no-wildcards --verbatim-files-from \
+        -T "$SCRATCH/names" 2>>"$SCRATCH/err" ||
+        { rc=${PIPESTATUS[-1]}; cat "$SCRATCH/err"; fail "could not extract the sampled files ($(why tar "$rc"))"; }
+    while IFS=$'\t' read -r want n; do
+        got=$(stat -c %s "$SCRATCH/out/$n" 2>/dev/null)
+        [[ $got == "$want" ]] || fail "$n came back as ${got:-nothing}, expected $want bytes"
+    done <"$SCRATCH/sample"
+    say "  $(wc -l <"$SCRATCH/sample") sampled files restored at the right size"
+fi
+
+if [[ -n $SET_CHECK ]]; then
+    free=$(df -Pk "$WORK" | awk 'NR==2 {print $4 * 1024}')
+    (( free > SIZE * 3 + DRILL_SPARE_MB * 1048576 )) || abort "not enough space in $WORK to extract $NAME for check ="
+    say "  extracting everything for: $SET_CHECK"
+    mkdir -p "$SCRATCH/full"
+    : >"$SCRATCH/err"
+    stream 2>>"$SCRATCH/err" | tar -xf - -C "$SCRATCH/full" 2>>"$SCRATCH/err" ||
+        { rc=${PIPESTATUS[-1]}; cat "$SCRATCH/err"; fail "full extraction of $NAME failed ($(why tar "$rc"))"; }
+    ( cd "$SCRATCH/full" && timeout "$DRILL_TIMEOUT" bash -c "$SET_CHECK" ) >"$SCRATCH/check" 2>&1 </dev/null ||
+        { tail -5 "$SCRATCH/check"; fail "check = failed: $(tail -1 "$SCRATCH/check")"; }
+    say "  check = passed"
+fi
+
+record PASS "$count entries"
+say "PASS: $SET restores from its $FROM copy ($NAME)."
+[[ $FROM == "$USUAL" ]] || say "  (a $FROM drill: the drill_days clock is unchanged)"
+(( KEEP )) && say "  kept in $SCRATCH"
+exit 0

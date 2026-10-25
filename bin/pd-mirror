@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+# pd-mirror - copy each set's archives to a second disk, checked and pruned.
+#
+# Usage: pd-mirror [--dry-run] [SET...]
+#        pd-mirror --init DIR
+#
+# For every set with mirror = DIR (or just the SETs named): copies the local
+# archives the mirror does not have yet, compares sha256 after each copy, then
+# applies the set's keep tiers to the mirror with pd-prune --mirror.
+#
+# A mirror folder is only written to below a .pd-mirror marker. Make one with
+# --init on the mounted drive, so an unmounted drive's empty mount point is never filled.
+#
+# Exit: 0 done (sets whose drive is absent are skipped), 1 something failed.
+
+PROG=pd-mirror
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+
+if [[ $1 == --init ]]; then
+    [[ -d $2 ]] || die "usage: pd-mirror --init DIR (an existing folder on the mounted drive)"
+    touch "$2/.pd-mirror" && say "marked $2 as a mirror"
+    exit 0
+fi
+
+DRY=0
+[[ $1 == --dry-run ]] && { DRY=1; shift; }
+sets=("$@")
+(( ${#sets[@]} )) || mapfile -t sets < <(list_sets)
+
+record() { # SET OK|FAIL MESSAGE
+    (( DRY )) && return 0
+    printf 'result=%s\ntime=%s\nmessage=%s\n' "$2" "$(date +%s)" "$3" >"$STATE_DIR/$1.mirror"
+}
+
+failed=0
+for s in "${sets[@]}"; do
+    load_set "$s" || { warn "$LOAD_ERR"; failed=1; continue; }
+    [[ -n $SET_MIRROR ]] || continue
+    if ! mirror_root "$SET_MIRROR" >/dev/null; then
+        say "$s: skipped, no .pd-mirror marker at or above $SET_MIRROR (drive not mounted?)"
+        continue
+    fi
+    (( DRY )) || mkdir -p "$SET_MIRROR" || { record "$s" FAIL "cannot create $SET_MIRROR"; failed=1; continue; }
+
+    copied=0 bad=""
+    while IFS= read -r name; do
+        [[ -e $SET_MIRROR/$name ]] && continue
+        grep -qxF -- "$name" "$STATE_DIR/$s.mirror-retired" 2>/dev/null && continue
+        if (( DRY )); then say "$s: would copy $name"; continue; fi
+        tmp="$SET_MIRROR/.partial-$name"
+        if cp -- "$SET_LOCAL/$name" "$tmp" &&
+           [[ $(sha256sum <"$tmp") == "$(sha256sum <"$SET_LOCAL/$name")" ]]; then
+            mv -f -- "$tmp" "$SET_MIRROR/$name"
+            copied=$((copied + 1))
+        else
+            rm -f -- "$tmp"
+            bad=$name
+            break
+        fi
+    done < <(local_archives "$SET_LOCAL" "$s")
+
+    if [[ -n $bad ]]; then
+        say "$s: FAILED copying $bad (the copy did not match)"
+        record "$s" FAIL "copy of $bad did not match"
+        notify critical "Mirror failed: $s" "The copy of $bad did not match the original."
+        failed=1
+        continue
+    fi
+    (( DRY )) && { "$HERE/pd-prune" --dry-run --mirror "$s"; continue; }
+    if "$HERE/pd-prune" --mirror "$s" >/dev/null; then
+        say "$s: copied $copied, mirror pruned"
+        record "$s" OK "copied $copied"
+    else
+        say "$s: copied $copied, but pruning the mirror failed (see pd-prune --dry-run --mirror $s)"
+        record "$s" FAIL "pruning the mirror failed"
+        failed=1
+    fi
+done
+exit "$failed"

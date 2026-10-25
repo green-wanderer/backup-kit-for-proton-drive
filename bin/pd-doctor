@@ -1,0 +1,130 @@
+#!/usr/bin/env bash
+# pd-doctor - check that pd-kit has what it needs, and say how to fix what it does not.
+#
+# Usage: pd-doctor           tools, Proton Drive login, every set, and the backups
+#        pd-doctor --tools   tools only (no network, no sets)
+#
+# Exit: 0 nothing to fix, 1 something to fix.
+
+PROG=pd-doctor
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+
+TOOLS_ONLY=0
+case $1 in
+    --tools) TOOLS_ONLY=1 ;;
+    "") ;;
+    *) die "unknown option $1 (try -h)" ;;
+esac
+
+FIXES=0
+ok()   { printf '  ok    %s\n' "$1"; }
+fix()  { printf '  FIX   %s\n' "$1"; FIXES=$((FIXES + 1)); }
+note() { printf '  note  %s\n' "$1"; }
+
+# The package that provides each tool, per package manager.
+pkg() { # TOOL
+    local mgr=""
+    for m in apt dnf pacman zypper; do command -v "$m" >/dev/null && { mgr=$m; break; }; done
+    case $1:$mgr in
+        flock:*)               printf 'util-linux' ;;
+        notify-send:apt)       printf 'libnotify-bin' ;;
+        notify-send:*)         printf 'libnotify' ;;
+        *)                     printf '%s' "$1" ;;
+    esac
+}
+install_hint() { # PACKAGE...
+    if   command -v apt    >/dev/null; then printf 'sudo apt install %s' "$*"
+    elif command -v dnf    >/dev/null; then printf 'sudo dnf install %s' "$*"
+    elif command -v pacman >/dev/null; then printf 'sudo pacman -S %s' "$*"
+    elif command -v zypper >/dev/null; then printf 'sudo zypper install %s' "$*"
+    else printf 'install with your package manager: %s' "$*"; fi
+}
+
+say "pd-kit $(cat "$HERE/../VERSION" 2>/dev/null || echo '?')"
+say "Tools:"
+missing=()
+for t in tar zstd jq age; do
+    if command -v "$t" >/dev/null; then ok "$t"; else fix "$t is missing"; missing+=("$(pkg "$t")"); fi
+done
+tar --version 2>/dev/null | grep -q GNU || fix "tar is not GNU tar"
+(( BASH_VERSINFO[0] >= 4 )) || fix "bash is older than 4"
+if command -v proton-drive >/dev/null; then
+    v=$(proton-drive --version 2>/dev/null | head -1 | grep -o '[0-9][0-9.]*' | head -1)
+    ok "proton-drive${v:+ $v}"
+else
+    fix "proton-drive is missing. Download the Linux version from $CLI_URL,
+        then run: bash $(readlink -f "$HERE/..")/install.sh (it finds and installs it)"
+fi
+for t in flock notify-send; do
+    command -v "$t" >/dev/null && ok "$t" || { note "$t is missing (optional)"; missing+=("$(pkg "$t")"); }
+done
+(( ${#missing[@]} )) && say "  To install: $(install_hint "${missing[@]}")"
+
+case ":$PATH:" in
+    *":$HOME/.local/bin:"*) ;;
+    *) note "~/.local/bin is not on your PATH; open a new terminal, or run: bash install.sh" ;;
+esac
+
+if (( TOOLS_ONLY )); then
+    (( FIXES == 0 )); exit $?
+fi
+
+say "Proton Drive:"
+if ! command -v proton-drive >/dev/null; then
+    say "  (needs the CLI, above)"
+elif drive_ready; then
+    ok "logged in"
+    used=$(timeout "$LIST_TIMEOUT" proton-drive filesystem size -j "$DRIVE_ROOT" </dev/null 2>/dev/null | jq -r '.size // empty' 2>/dev/null)
+    [[ $used =~ ^[0-9]+$ ]] && note "your files use $(numfmt --to=iec "$used"), trash included"
+else
+    fix "not logged in (or offline). Run: pd-session"
+fi
+
+say "Sets:"
+mapfile -t sets < <(list_sets)
+(( ${#sets[@]} )) || fix "no backup sets yet. Run: pd-init"
+for s in "${sets[@]}"; do
+    if ! load_set "$s"; then fix "$s: $LOAD_ERR"; continue; fi
+    problems=0
+    # A before = hook may make its source when it runs.
+    [[ -d $SET_SOURCE || -n $SET_BEFORE ]] || { fix "$s: source $SET_SOURCE does not exist"; problems=1; }
+    if [[ -n $SET_RECIPIENTS && ! -r $SET_RECIPIENTS ]]; then
+        fix "$s: cannot read the public key $SET_RECIPIENTS"; problems=1
+    fi
+    if [[ -n $SET_IDENTITY && ! -r $SET_IDENTITY ]]; then
+        fix "$s: cannot read the private key $SET_IDENTITY (drills and restores need it)"; problems=1
+    elif [[ -n $SET_IDENTITY && -n $SET_RECIPIENTS && -r $SET_RECIPIENTS ]] && command -v age-keygen >/dev/null; then
+        # A passphrase-protected key cannot be read here; that is not a fault.
+        if pub=$(age-keygen -y "$SET_IDENTITY" 2>/dev/null </dev/null); then
+            grep -qxF -- "$pub" "$SET_RECIPIENTS" ||
+                { fix "$s: $SET_IDENTITY does not open what $SET_RECIPIENTS encrypts"; problems=1; }
+        fi
+    fi
+    [[ -z $SET_RECIPIENTS && $SET_PUSH == yes && $SET_MODE == tar ]] && note "$s: not encrypted with your own key (Proton's encryption still applies)"
+    if (( SET_STALE_DAYS > 0 )) && command -v systemctl >/dev/null; then
+        systemctl --user is-enabled "pd-backup@$s.timer" >/dev/null 2>&1 ||
+            systemctl --user is-enabled "pd-backup-$s.timer" >/dev/null 2>&1 ||
+            note "$s: not scheduled. Run: systemctl --user enable --now pd-backup@$s.timer"
+    fi
+    (( problems )) || ok "$s"
+done
+
+# The backups themselves: what pd-check would warn about.
+if (( ${#sets[@]} )); then
+    say "Backups:"
+    warnings=$("$HERE/pd-check")
+    if [[ -n $warnings ]]; then
+        while IFS= read -r w; do fix "${w#! }"; done <<<"$warnings"
+    else
+        ok "all current, pushed and test-restored"
+    fi
+fi
+
+if (( FIXES )); then
+    say $'\n'"$FIXES thing(s) to fix."
+    exit 1
+fi
+say $'\n'"Nothing to fix."
+exit 0

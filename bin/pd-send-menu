@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# pd-send-menu - build Dolphin's "Send to Proton Drive" menu from your Drive folders.
+#
+# Usage: pd-send-menu [--depth N] [--quiet]
+#        pd-send-menu --remove
+#
+# Walks your Drive folders (menu_depth levels, at most menu_max folders) into
+# CACHE_DIR/menu.tsv. The KDE plugin in kde/ reads that file and shows the
+# whole tree as nested menus. Without the plugin, or with menu_mode = flat,
+# it also writes a one-level service menu to menu_file. Run it again when your
+# folders change; "Refresh folder list" in the menu does the same.
+
+PROG=pd-send-menu
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+
+MODEL="$CACHE_DIR/menu.tsv"
+QUIET=0
+while (( $# )); do
+    case $1 in
+        --remove) rm -f -- "$MENU_FILE" "$MODEL"; say "removed $MENU_FILE and $MODEL"; exit 0 ;;
+        --depth)  [[ $2 =~ ^[1-9][0-9]*$ ]] || die "--depth needs a number"; MENU_DEPTH=$2; shift ;;
+        --quiet)  QUIET=1 ;;
+        *) die "unknown option $1 (try -h)" ;;
+    esac
+    shift
+done
+command -v jq >/dev/null || die "jq is not installed"
+drive_ready || die "Proton Drive is not reachable; run pd-session"
+
+# Breadth-first, one listing per folder.
+folders=("$DRIVE_ROOT") levels=(0)
+for (( q = 0; q < ${#folders[@]} && ${#folders[@]} < MENU_MAX; q++ )); do
+    (( levels[q] < MENU_DEPTH )) || continue
+    while IFS=$'\t' read -r type _ name; do
+        [[ $type == folder ]] || continue
+        folders+=("${folders[q]}/$name")
+        levels+=($(( levels[q] + 1 )))
+    done < <(drive_ls "${folders[q]}" | sort -f -t$'\t' -k3)
+done
+
+mkdir -p "$CACHE_DIR"
+{
+    printf 'R\t%s\nX\t%s\n' "$DRIVE_ROOT" "$HERE/pd-send"
+    for (( i = 1; i < ${#folders[@]}; i++ )); do
+        printf 'N\t%s\t%s\t%s\n' "${folders[i]}" "${folders[i]%/*}" "${folders[i]##*/}"
+    done
+} >"$MODEL.tmp" && mv -f "$MODEL.tmp" "$MODEL"
+
+plugin_installed() {
+    local d
+    for d in "$(qtpaths6 --query QT_INSTALL_PLUGINS 2>/dev/null)" /usr/lib/*/qt6/plugins /usr/lib/qt6/plugins \
+             /usr/local/lib/*/qt6/plugins /usr/local/lib/qt6/plugins /usr/local/lib/plugins; do
+        [[ -n $d && -e $d/kf6/kfileitemaction/pd-send-kio.so ]] && return 0
+    done
+    return 1
+}
+
+flat=1
+case $MENU_MODE in
+    plugin) flat=0 ;;
+    auto)   plugin_installed && flat=0 ;;
+esac
+
+# Exec= quoting per the desktop entry spec: escape " ` $ \ inside the quotes,
+# double % for field codes, then double every backslash for the file itself.
+exec_arg() {
+    local s=$1
+    s=${s//\\/\\\\}; s=${s//\"/\\\"}; s=${s//\`/\\\`}; s=${s//\$/\\\$}
+    s=${s//%/%%}; s=${s//\\/\\\\}
+    printf '"%s"' "$s"
+}
+
+if (( flat )); then
+    pdsend=$(exec_arg "$HERE/pd-send")
+    mkdir -p "${MENU_FILE%/*}"
+    {
+        ids="pick;mkdir;get;"
+        for i in "${!folders[@]}"; do ids+="f$i;"; done
+        printf '[Desktop Entry]\nType=Service\nMimeType=all/all;\nX-KDE-Submenu=Send to Proton Drive\nIcon=folder-cloud\nActions=%s\n' "$ids"
+        printf '\n[Desktop Action pick]\nName=Choose folder…\nIcon=folder-open\nExec=%s --pick %%F\n' "$pdsend"
+        printf '\n[Desktop Action mkdir]\nName=New folder…\nIcon=folder-new\nExec=%s --mkdir %%F\n' "$pdsend"
+        printf '\n[Desktop Action get]\nName=Get from Proton Drive…\nIcon=folder-download\nExec=%s --get %%F\n' "$pdsend"
+        for i in "${!folders[@]}"; do
+            label=${folders[i]#"$DRIVE_ROOT"}; label=${label#/}; label=${label:-My files}
+            label=${label//\\/\\\\}
+            printf '\n[Desktop Action f%s]\nName=%s\nIcon=folder\nExec=%s --to %s %%F\n' \
+                "$i" "${label//\// › }" "$pdsend" "$(exec_arg "${folders[i]}")"
+        done
+    } >"$MENU_FILE.tmp" && mv -f "$MENU_FILE.tmp" "$MENU_FILE"
+    chmod +x "$MENU_FILE"
+else
+    rm -f -- "$MENU_FILE"
+fi
+
+if (( ! QUIET )); then
+    say "read $(( ${#folders[@]} - 1 )) folders into $MODEL"
+    (( ${#folders[@]} >= MENU_MAX )) && say "stopped at menu_max ($MENU_MAX) folders"
+    if (( flat )); then say "wrote the one-level menu to $MENU_FILE"
+    else say "the KDE plugin shows the menu; no service menu written"; fi
+fi
+exit 0

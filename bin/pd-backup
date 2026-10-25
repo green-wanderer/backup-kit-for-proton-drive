@@ -1,0 +1,319 @@
+#!/usr/bin/env bash
+# pd-backup - archive one backup set, encrypt it, and push it to Proton Drive.
+#
+# Usage: pd-backup [--no-push] [--force] SET
+#        pd-backup --push-only SET    retry the push of the newest local archive
+#
+# SET is ~/.config/pd-backup/sets/SET.conf (see examples/sets/).
+#
+# The set's before = command runs first, if it has one. Exit 3 from it means
+# "nothing to do" and the run ends quietly; exit 4 means "incomplete input":
+# it is archived and pushed but recorded PARTIAL, and nothing is pruned.
+#
+# mode = tar archives the source folder as tar.zst; mode = file takes the newest
+# file matching match = as the archive. Either is age-encrypted when the set has
+# recipients. forbid = is checked against the contents before anything uploads.
+# With only_on_change = yes (always, for mode = file) an unchanged input makes no archive.
+#
+# After a push the copy on Drive is checked by size, and only then does
+# pd-prune run. push = no keeps the set local. The result goes to
+# STATE_DIR/SET.status for pd-check.
+#
+#   --force    archive even if the input has not changed
+#
+# Exit: 0 done (or push paused, with a notification), 1 failed, 2 bad usage.
+
+PROG=pd-backup
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+set -o pipefail
+
+MODE=full FORCE=0 LOCAL_STATE=OK
+while [[ $1 == -* ]]; do
+    case $1 in
+        --no-push)   MODE=local ;;
+        --push-only) MODE=push ;;
+        --force)     FORCE=1 ;;
+        *) die "unknown option $1 (try -h)" ;;
+    esac
+    shift
+done
+[[ $# -eq 1 ]] || die "usage: pd-backup [--no-push|--push-only] [--force] SET"
+load_set "$1" || die "$LOAD_ERR"
+SET=$SET_NAME
+[[ $SET_PUSH == no && $MODE == full ]] && MODE=local
+
+mkdir -p "$STATE_DIR" "$SET_LOCAL" || die "cannot create $SET_LOCAL"
+LOG="$STATE_DIR/$SET.log"
+[[ -f $LOG ]] && (( $(stat -c %s "$LOG") > LOG_MAX_KB * 1024 )) && mv -f "$LOG" "$LOG.1"
+log() { printf '%s %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG"; }
+
+# One run per set at a time. A second run steps aside and leaves the status alone.
+if command -v flock >/dev/null; then
+    exec 9>"$STATE_DIR/$SET.lock"
+    flock -n 9 || { log "another run of $SET is in progress; not starting"; exit 0; }
+fi
+
+# scratch = yes: the source is a hook's staging folder, emptied after every run.
+clear_scratch() {
+    [[ $SET_SCRATCH == yes && -d $SET_SOURCE ]] && find "$SET_SOURCE" -mindepth 1 -delete
+    return 0
+}
+
+fail() { # MESSAGE - the local copy did not get made
+    clear_scratch
+    log "FAILED: $1"
+    write_status "$SET" FAIL OFF "-" "$1"
+    notify critical "Backup failed: $SET" "$1"
+    exit 1
+}
+
+run_before() {
+    [[ -n $SET_BEFORE ]] || return 0
+    local rc=0
+    log "running: $SET_BEFORE"
+    PD_SET=$SET PD_SOURCE=$SET_SOURCE PD_LOCAL=$SET_LOCAL PD_STATE=$STATE_DIR PD_PID=$$ \
+        timeout "$BEFORE_TIMEOUT" bash -c "$SET_BEFORE" </dev/null >>"$LOG" 2>&1 9>&- || rc=$?
+    case $rc in
+        0) ;;
+        3) clear_scratch; log "before = says there is nothing to do"; exit 0 ;;
+        4) log "before = says the input is incomplete; archiving it as PARTIAL, no pruning"; LOCAL_STATE=PARTIAL ;;
+        *) fail "before = exited $rc, see $LOG" ;;
+    esac
+}
+
+extensions() { # FILENAME -> its trailing extensions, e.g. ".tar.gz.age"; ".bin" if none
+    local n=$1 ext=""
+    while [[ $n =~ ^(.+)(\.[A-Za-z][A-Za-z0-9]{0,4})$ ]]; do
+        ext=${BASH_REMATCH[2]}$ext; n=${BASH_REMATCH[1]}
+    done
+    printf '%s\n' "${ext:-.bin}"
+}
+
+new_name() { # EXTENSIONS -> sets ARCHIVE to a free name in SET_LOCAL
+    local stamp
+    while :; do
+        stamp=$(date +%F_%H%M%S)
+        ARCHIVE="$SET_LOCAL/${SET}_$stamp$1"
+        [[ -e $ARCHIVE ]] || return 0
+        sleep 1
+    done
+}
+
+# What the input looked like at the last archive, to tell "unchanged" apart.
+fingerprint() {
+    if [[ $SET_MODE == file ]]; then
+        sha256sum "$INPUT" | cut -d' ' -f1
+    else
+        find "$SET_SOURCE" -mindepth 1 -printf '%y\t%s\t%T@\t%P\n' 2>/dev/null | sort | sha256sum | cut -d' ' -f1
+    fi
+}
+
+unchanged() {
+    [[ $SET_MODE == file || $SET_ON_CHANGE == yes ]] || return 1
+    (( FORCE )) && return 1
+    [[ -n $(local_archives "$SET_LOCAL" "$SET") ]] || return 1
+    FINGERPRINT=$(fingerprint)
+    [[ -f $STATE_DIR/$SET.input && $(<"$STATE_DIR/$SET.input") == "$FINGERPRINT" ]]
+}
+
+check_forbid() { # INDEX_FILE
+    local pat hit
+    for pat in "${SET_FORBID[@]}"; do
+        hit=$(grep -F -m3 -- "$pat" "$1") || continue
+        rm -f -- "$TMP" "$1"
+        fail "forbidden path in the archive ($pat): $(tr '\n' ' ' <<<"$hit")- nothing was kept or uploaded"
+    done
+}
+
+make_archive() {
+    local rc ext idx="$CACHE_DIR/$SET.index"
+    [[ -d $SET_SOURCE ]] || fail "source $SET_SOURCE does not exist"
+    mkdir -p "$CACHE_DIR" || fail "cannot create $CACHE_DIR"
+    SET_SOURCE=$(readlink -f -- "$SET_SOURCE")
+    if [[ -n $SET_RECIPIENTS ]]; then
+        command -v age >/dev/null || fail "age is not installed"
+        [[ -r $SET_RECIPIENTS ]] || fail "cannot read recipients file $SET_RECIPIENTS"
+    fi
+
+    if [[ $SET_MODE == file ]]; then
+        INPUT=$(find "$SET_SOURCE" -maxdepth 1 -type f -name "$SET_MATCH" -printf '%T@\t%p\n' | sort -rn | head -1 | cut -f2-)
+        [[ -n $INPUT ]] || fail "no file matching $SET_MATCH in $SET_SOURCE"
+        ext=$(extensions "${INPUT##*/}")
+    else
+        [[ -n $(find "$SET_SOURCE" -mindepth 1 -print -quit 2>/dev/null) ]] ||
+            fail "source $SET_SOURCE is empty (an unmounted drive?)"
+        command -v zstd >/dev/null || fail "zstd is not installed"
+        ext=.tar.zst
+    fi
+
+    if unchanged; then
+        log "input unchanged since the last archive; no new archive"
+        date +%s >"$STATE_DIR/$SET.checked"
+        return 1
+    fi
+    [[ -z $FINGERPRINT && ( $SET_MODE == file || $SET_ON_CHANGE == yes ) ]] && FINGERPRINT=$(fingerprint)
+
+    [[ -n $SET_RECIPIENTS && $ext != *.age ]] && ext+=.age
+    new_name "$ext"
+    TMP="$SET_LOCAL/.partial-${ARCHIVE##*/}"
+
+    if [[ $SET_MODE == file ]]; then
+        log "taking ${INPUT##*/} -> ${ARCHIVE##*/}"
+        if [[ -n $SET_RECIPIENTS && $INPUT != *.age ]]; then
+            age -R "$SET_RECIPIENTS" -o "$TMP" "$INPUT" 2>>"$LOG" || { rm -f -- "$TMP"; fail "age could not encrypt ${INPUT##*/}"; }
+        else
+            cp -- "$INPUT" "$TMP" || { rm -f -- "$TMP"; fail "cannot copy ${INPUT##*/}"; }
+        fi
+        if (( ${#SET_FORBID[@]} )) && [[ $INPUT == *.tar* ]]; then
+            tar -tf "$INPUT" >"$idx" 2>/dev/null && check_forbid "$idx"
+        fi
+    else
+        # Never archive the archive folder into itself.
+        local -a excl=()
+        for x in "${SET_EXCLUDE[@]}"; do excl+=("--exclude=$x"); done
+        [[ $SET_LOCAL == "$SET_SOURCE"/* ]] && excl+=("--exclude=./${SET_LOCAL#"$SET_SOURCE"/}")
+        # Nor any set's private key that lives inside the source.
+        local f key
+        for f in "$CONF_DIR"/sets/*.conf; do
+            key=$(sed -n 's/^[[:space:]]*identity[[:space:]]*=[[:space:]]*//p' "$f" 2>/dev/null | tail -1)
+            key=${key%"${key##*[![:space:]]}"}
+            [[ -n $key ]] || continue
+            [[ $key == "~/"* ]] && key="$HOME${key#\~}"
+            key=$(readlink -f -- "$key" 2>/dev/null) || continue
+            [[ $key == "$SET_SOURCE"/* ]] || continue
+            excl+=("--exclude=./${key#"$SET_SOURCE"/}")
+            SET_FORBID+=("${key#"$SET_SOURCE"/}")
+        done
+
+        log "archiving $SET_SOURCE -> ${ARCHIVE##*/}"
+        if [[ -n $SET_RECIPIENTS ]]; then
+            tar -C "$SET_SOURCE" "${excl[@]}" -cvf - --index-file="$idx" . 2>>"$LOG" |
+                zstd -q -T0 -"$ZSTD_LEVEL" | age -R "$SET_RECIPIENTS" >"$TMP"
+        else
+            tar -C "$SET_SOURCE" "${excl[@]}" -cvf - --index-file="$idx" . 2>>"$LOG" |
+                zstd -q -T0 -"$ZSTD_LEVEL" >"$TMP"
+        fi
+        rc=("${PIPESTATUS[@]}")
+        # tar exits 1 when a file changed while it was read. On a live home folder
+        # that happens most days and the archive is still good.
+        if (( rc[0] > 1 || rc[1] != 0 || ${rc[2]:-0} != 0 )); then
+            rm -f -- "$TMP"
+            fail "archive pipeline failed (tar=${rc[0]} zstd=${rc[1]}${rc[2]:+ age=${rc[2]}}), see $LOG"
+        fi
+        (( rc[0] == 1 )) && log "note: some files changed while being read (see $LOG)"
+        check_forbid "$idx"
+    fi
+
+    rm -f -- "$idx"
+    mv -f -- "$TMP" "$ARCHIVE" || fail "cannot move the archive into place"
+    clear_scratch
+    [[ -n $FINGERPRINT ]] && printf '%s\n' "$FINGERPRINT" >"$STATE_DIR/$SET.input"
+    date +%s >"$STATE_DIR/$SET.checked"
+    log "archived $(du -h "$ARCHIVE" | cut -f1)"
+
+    # Local retention: the newest keep_local archives of this set, nothing else touched.
+    local_archives "$SET_LOCAL" "$SET" | head -n -"$SET_KEEP_LOCAL" | while IFS= read -r old; do
+        rm -f -- "${SET_LOCAL:?}/$old" && log "removed old local archive $old"
+    done
+    return 0
+}
+
+push() {
+    local name size remote why said out rc=0
+    name=${ARCHIVE##*/}
+    size=$(stat -c %s "$ARCHIVE")
+
+    # Written before the upload starts, so a run killed mid-upload still says
+    # the push is outstanding.
+    write_status "$SET" "$LOCAL_STATE" PENDING "$name" "pushing"
+
+    if why=$(drive_problem); then
+        log "push paused: $why"
+        write_status "$SET" "$LOCAL_STATE" PENDING "$name" "$why"
+        notify critical "Proton Drive push paused: $SET" \
+            "The local backup is safe. Cause: $why. Then: pd-backup --push-only $SET"
+        exit 0
+    fi
+
+    drive_mkdir_p "$SET_DRIVE"
+    log "uploading $name to $SET_DRIVE"
+    out="$STATE_DIR/$SET.upload"
+    timeout "$PUSH_TIMEOUT" proton-drive filesystem upload -f replace "$ARCHIVE" "$SET_DRIVE" \
+        </dev/null >"$out" 2>&1 || rc=$?
+    cat "$out" >>"$LOG"
+    # The CLI's last line says why an upload failed (a full Drive, say).
+    said=$(tr '\r' '\n' <"$out" | grep -v '^[[:space:]]*$' | tail -1 | cut -c1-200)
+    rm -f -- "$out"
+
+    # The exit code is not the answer; what Drive now holds is.
+    remote=$(drive_size "$SET_DRIVE" "$name")
+    case $? in
+        0) if [[ $remote == "$size" ]]; then
+               log "on Drive, $size bytes, matches local"
+               write_status "$SET" "$LOCAL_STATE" OK "$name" "pushed and verified"
+           else
+               log "size mismatch on Drive: $remote bytes, local $size (upload rc=$rc)"
+               write_status "$SET" "$LOCAL_STATE" PENDING "$name" "Drive copy is the wrong size"
+               notify critical "Backup push failed: $SET" "The copy on Drive is the wrong size. Retry: pd-backup --push-only $SET"
+               exit 1
+           fi ;;
+        1) log "not on Drive after upload (rc=$rc)"
+           write_status "$SET" "$LOCAL_STATE" PENDING "$name" "upload failed (rc=$rc)${said:+: $said}"
+           notify critical "Backup push failed: $SET" "${said:+$said. }The local backup is safe. Retry: pd-backup --push-only $SET"
+           exit 1 ;;
+        *) log "uploaded (rc=$rc) but Drive did not answer the check"
+           write_status "$SET" "$LOCAL_STATE" UNKNOWN "$name" "could not confirm the upload"
+           notify normal "Backup push unconfirmed: $SET" "Drive did not answer. Check later with: pd-backup --push-only $SET"
+           exit 1 ;;
+    esac
+
+    # Prune only once today's copy is proven to be there, and never behind a
+    # partial one: it would take a tier slot from a complete archive.
+    if [[ $LOCAL_STATE == PARTIAL ]]; then
+        log "partial archive: not pruning"
+    else
+        "$HERE/pd-prune" "$SET" >>"$LOG" 2>&1 || log "WARNING: pd-prune failed, see $LOG"
+    fi
+}
+
+newest_local() {
+    local newest
+    newest=$(local_archives "$SET_LOCAL" "$SET" | tail -1)
+    [[ -n $newest ]] || return 1
+    ARCHIVE="$SET_LOCAL/$newest"
+    # A retried push keeps the archive's PARTIAL mark, so it still prunes nothing.
+    read_status "$SET"
+    [[ $ST_local == PARTIAL && $ST_archive == "$newest" ]] && LOCAL_STATE=PARTIAL
+    return 0
+}
+
+case $MODE in
+    push)
+        [[ $SET_PUSH == yes ]] || die "$SET has push = no"
+        newest_local || die "no local archive of $SET in $SET_LOCAL"
+        push ;;
+    full)
+        run_before
+        if make_archive; then
+            push
+        else
+            # Nothing new, but an earlier push may still be owed.
+            read_status "$SET"
+            if [[ $ST_push == PENDING || $ST_push == UNKNOWN ]] && newest_local; then
+                log "retrying the outstanding push of ${ARCHIVE##*/}"
+                push
+            fi
+        fi ;;
+    local)
+        run_before
+        if make_archive; then
+            if [[ $SET_PUSH == no ]]; then
+                write_status "$SET" "$LOCAL_STATE" OFF "${ARCHIVE##*/}" "archived (push = no)"
+            else
+                write_status "$SET" "$LOCAL_STATE" PENDING "${ARCHIVE##*/}" "archived with --no-push"
+            fi
+        fi ;;
+esac
+exit 0

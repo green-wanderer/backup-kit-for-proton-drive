@@ -1,0 +1,7 @@
+# Sends a desktop notification for each backup that needs attention.
+[Unit]
+Description=Notify about backups that need attention
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/pd-check --notify

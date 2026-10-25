@@ -1,0 +1,11 @@
+{
+    "KPlugin": {
+        "Description": "Send files to Proton Drive, or get files from it",
+        "Icon": "folder-cloud",
+        "MimeTypes": [
+            "application/octet-stream",
+            "inode/directory"
+        ],
+        "Name": "Send to Proton Drive"
+    }
+}

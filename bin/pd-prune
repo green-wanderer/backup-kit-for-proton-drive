@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# pd-prune - grandfather-father-son retention for one set's archives on Proton Drive.
+#
+# Usage: pd-prune [--dry-run] [--max N] [--mirror] SET
+#
+# keep = D W M Y in the set's conf. Newest first, it keeps the newest archive of
+# each of the last D days, then of each of the next W ISO weeks, M months and
+# Y years. Everything else goes to the Drive trash; nothing is deleted outright.
+#
+# Refuses a policy that keeps nothing, or a run that would trash more than --max
+# files (default: prune_max). --dry-run shows every decision. --mirror applies the
+# same tiers to the set's mirror folder, moving retired archives into its .trash.
+#
+# Exit: 0 done, 1 something could not be trashed or the cap was hit, 2 bad usage.
+
+PROG=pd-prune
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+
+DRY=0 MAX=$PRUNE_MAX MIRROR=0
+while [[ $1 == -* ]]; do
+    case $1 in
+        --dry-run) DRY=1; shift ;;
+        --mirror)  MIRROR=1; shift ;;
+        --max) [[ $2 =~ ^[1-9][0-9]*$ ]] || die "--max needs a positive number"; MAX=$2; shift 2 ;;
+        *) die "unknown option $1 (try -h)" ;;
+    esac
+done
+[[ $# -eq 1 ]] || die "usage: pd-prune [--dry-run] [--max N] [--mirror] SET"
+load_set "$1" || die "$LOAD_ERR"
+
+if (( MIRROR )); then
+    [[ -n $SET_MIRROR ]] || die "$SET_NAME has no mirror ="
+    mirror_root "$SET_MIRROR" >/dev/null || die "no .pd-mirror marker at or above $SET_MIRROR (drive not mounted? pd-mirror --init)"
+    [[ -d $SET_MIRROR ]] || { say "no archives in $SET_MIRROR"; exit 0; }
+    WHERE=$SET_MIRROR
+    list() { find "$WHERE" -maxdepth 1 -type f -printf 'file\t-\t%f\n'; }
+    retire() {
+        mkdir -p "$WHERE/.trash" && mv -f -- "$WHERE/$1" "$WHERE/.trash/" &&
+            printf '%s\n' "$1" >>"$STATE_DIR/$SET_NAME.mirror-retired"
+    }
+else
+    [[ $SET_PUSH == yes ]] || die "$SET_NAME has push = no; nothing on Drive to prune"
+    command -v jq >/dev/null || die "jq is not installed"
+    WHERE=$SET_DRIVE
+    list() { drive_ls "$WHERE"; }
+    retire() { timeout "$CALL_TIMEOUT" proton-drive filesystem trash "$WHERE/$1" </dev/null >/dev/null 2>&1; }
+fi
+
+read -r KD KW KM KY <<<"${SET_KEEP[*]}"
+(( KD + KW + KM + KY > 0 )) || die "keep = 0 0 0 0 would trash every archive; refusing"
+say "$SET_NAME: keep daily=$KD weekly=$KW monthly=$KM yearly=$KY"
+
+listing=$(list) || { warn "could not list $WHERE (offline or logged out?)"; exit 1; }
+RE=$(archive_re "$SET_NAME")
+mapfile -t names < <(cut -f3 <<<"$listing" | grep -E "$RE" | sort -r)
+(( ${#names[@]} )) || { say "no archives in $WHERE"; exit 0; }
+
+# A tier only claims a period that no tier above it already covers, so the
+# tiers extend each other instead of overlapping. %G-%V is the ISO week, so a
+# week across New Year stays one week.
+declare -A tier seen_day seen_week seen_month seen_year
+d=0 w=0 m=0 y=0
+for n in "${names[@]}"; do
+    [[ $n =~ $RE ]] || continue
+    day="${BASH_REMATCH[1]}-${BASH_REMATCH[2]}-${BASH_REMATCH[3]}"
+    week=$(date -d "$day" +%G-%V) || continue
+    month=${day:0:7} year=${day:0:4}
+    t=""
+    if   [[ -z ${seen_day[$day]}     ]] && (( d < KD )); then t=daily;   d=$((d + 1))
+    elif [[ -z ${seen_week[$week]}   ]] && (( w < KW )); then t=weekly;  w=$((w + 1))
+    elif [[ -z ${seen_month[$month]} ]] && (( m < KM )); then t=monthly; m=$((m + 1))
+    elif [[ -z ${seen_year[$year]}   ]] && (( y < KY )); then t=yearly;  y=$((y + 1))
+    fi
+    [[ -n $t ]] || continue
+    tier[$n]=$t
+    seen_day[$day]=1 seen_week[$week]=1 seen_month[$month]=1 seen_year[$year]=1
+done
+
+trash=()
+for n in "${names[@]}"; do
+    if [[ -n ${tier[$n]} ]]; then
+        (( DRY )) && printf '  keep   %-8s %s\n' "${tier[$n]}" "$n"
+    else
+        (( DRY )) && printf '  trash           %s\n' "$n"
+        trash+=("$n")
+    fi
+done
+say "${#names[@]} archives: keep $(( ${#names[@]} - ${#trash[@]} )), trash ${#trash[@]}"
+
+(( ${#trash[@]} )) || exit 0
+(( DRY )) && { say "dry run: nothing changed"; exit 0; }
+if (( ${#trash[@]} > MAX )); then
+    warn "would trash ${#trash[@]} files, over the cap of $MAX. Nothing touched. Check with --dry-run."
+    notify critical "pd-prune stopped: $SET_NAME" "Would trash ${#trash[@]} archives (cap $MAX). Nothing was touched."
+    exit 1
+fi
+
+failed=0
+for n in "${trash[@]}"; do
+    if retire "$n"; then
+        say "trashed $n"
+    else
+        warn "could not trash $n"
+        failed=$((failed + 1))
+    fi
+done
+
+# Retention that quietly stops working is worse than none, so say it loudly.
+if (( failed )); then
+    notify critical "pd-prune failed: $SET_NAME" "$failed of ${#trash[@]} archives could not be trashed."
+    exit 1
+fi
+if (( MIRROR )); then
+    say "moved ${#trash[@]} to $WHERE/.trash"
+else
+    say "trashed ${#trash[@]}. They still use quota until you empty the Drive trash."
+fi
+exit 0

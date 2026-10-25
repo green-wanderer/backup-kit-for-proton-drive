@@ -1,0 +1,10 @@
+# Copies every set with mirror = to its second disk. A disk that is not
+# mounted is skipped, so a daily timer is safe.
+[Unit]
+Description=Copy backups to the mirror disk
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/bin/pd-mirror
+Nice=10
+IOSchedulingClass=idle

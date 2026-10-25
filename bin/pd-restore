@@ -1,0 +1,181 @@
+#!/usr/bin/env bash
+# pd-restore - get files back from a backup, into a new folder. Never overwrites anything.
+#
+# Usage: pd-restore SET --list                    the archives you can restore
+#        pd-restore SET [ARCHIVE] [options]       restore one (default: the newest)
+#
+# ARCHIVE is a name from --list, or a date like 2026-10-01 (that day's newest).
+#
+#   --into DIR     where to put it; must be new or empty (default ./SET-restore-DATE)
+#   --only PATH    just this file or folder, as it was under the source
+#                  (e.g. Documents/taxes); repeatable
+#   --local, --mirror   restore from that copy instead of Proton Drive
+#   --key FILE     the private key, when the set's config does not name it
+#   --drive DIR    the Drive folder, when there is no config for SET
+#
+# On a new machine with no config, SET's archives are looked for in
+# drive_root/backups/SET. Log in with pd-session and give --key.
+#
+# Exit: 0 restored, 1 failed, 2 bad usage.
+
+PROG=pd-restore
+[[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
+HERE=$(dirname "$(readlink -f "$0")")
+source "$HERE/../lib/common.sh"
+set -o pipefail
+
+SET="" WANT="" INTO="" FROM="" KEY="" DRIVE="" LIST=0 ONLY=()
+while (( $# )); do
+    case $1 in
+        --list)   LIST=1 ;;
+        --local)  FROM=local ;;
+        --mirror) FROM=mirror ;;
+        --into)   [[ -n $2 ]] || die "--into needs a folder"; INTO=$2; shift ;;
+        --only)   [[ -n $2 ]] || die "--only needs a path"; ONLY+=("$2"); shift ;;
+        --key)    [[ -r $2 ]] || die "cannot read the key file '$2'"; KEY=$(readlink -f -- "$2"); shift ;;
+        --drive)  [[ $2 == /* ]] || die "--drive needs a Drive path like $DRIVE_ROOT/backups/SET"; DRIVE=${2%/}; shift ;;
+        -*)       die "unknown option $1 (try -h)" ;;
+        *)        if [[ -z $SET ]]; then SET=$1
+                  elif [[ -z $WANT ]]; then WANT=$1
+                  else die "too many arguments (try -h)"; fi ;;
+    esac
+    shift
+done
+[[ -n $SET ]] || die "which set? usage: pd-restore SET [ARCHIVE] (sets: $(list_sets | tr '\n' ' '))"
+
+if [[ -e $CONF_DIR/sets/$SET.conf ]]; then
+    load_set "$SET" || die "$LOAD_ERR"
+else
+    [[ $SET =~ ^[A-Za-z0-9-]+$ ]] || die "bad set name '$SET'"
+    [[ -z $FROM ]] || die "no config for $SET, so there is no local or mirror copy to use"
+    say "No config for $SET here; looking on Drive."
+    SET_NAME=$SET SET_PUSH=yes SET_DRIVE="$DRIVE_ROOT/backups/$SET" SET_IDENTITY="" SET_MIRROR=""
+fi
+[[ -n $KEY ]] && SET_IDENTITY=$KEY
+[[ -n $DRIVE ]] && SET_DRIVE=$DRIVE
+if [[ -z $FROM ]]; then
+    FROM=drive
+    [[ $SET_PUSH == no ]] && { FROM=local; [[ -n $SET_MIRROR ]] && FROM=mirror; }
+fi
+
+# --- find the archives -------------------------------------------------------
+
+RE=$(archive_re "$SET")
+case $FROM in
+    drive)
+        why=$(drive_problem) && die "$why"
+        listing=$(drive_ls "$SET_DRIVE") || die "could not list $SET_DRIVE (is that the right folder? --drive says otherwise)"
+        mapfile -t found < <(grep -P '^file\t' <<<"$listing" | cut -f2,3 | sort -t$'\t' -k2 |
+            while IFS=$'\t' read -r sz n; do [[ $n =~ $RE ]] && printf '%s\t%s\n' "$sz" "$n"; done) ;;
+    local|mirror)
+        DIR=$SET_LOCAL
+        if [[ $FROM == mirror ]]; then
+            [[ -n $SET_MIRROR ]] || die "$SET has no mirror ="
+            mirror_root "$SET_MIRROR" >/dev/null || die "the mirror is not mounted (no .pd-mirror marker above $SET_MIRROR)"
+            DIR=$SET_MIRROR
+        fi
+        mapfile -t found < <(local_archives "$DIR" "$SET" | while IFS= read -r n; do
+            printf '%s\t%s\n' "$(stat -c %s "$DIR/$n")" "$n"; done) ;;
+esac
+(( ${#found[@]} )) || die "no archives of $SET in its $FROM copy"
+
+if (( LIST )); then
+    for f in "${found[@]}"; do
+        printf '%8s  %s\n' "$(numfmt --to=iec "${f%%$'\t'*}" 2>/dev/null)" "${f#*$'\t'}"
+    done
+    say "${#found[@]} archives in the $FROM copy, oldest first."
+    exit 0
+fi
+
+pick=""
+if [[ -z $WANT ]]; then
+    pick=${found[-1]}
+else
+    for f in "${found[@]}"; do
+        n=${f#*$'\t'}
+        [[ $n == "$WANT" || $n == "${SET}_${WANT}_"* ]] && pick=$f
+    done
+    [[ -n $pick ]] || die "no archive '$WANT' in the $FROM copy (see: pd-restore $SET --list)"
+fi
+SIZE=${pick%%$'\t'*} NAME=${pick#*$'\t'}
+
+# --- what it takes to open it ------------------------------------------------
+
+LAYERS=() base=$NAME
+while :; do
+    case $base in
+        *.age) LAYERS+=(age);  base=${base%.age} ;;
+        *.zst) LAYERS+=(zstd); base=${base%.zst} ;;
+        *.gz)  LAYERS+=(gzip); base=${base%.gz} ;;
+        *.xz)  LAYERS+=(xz);   base=${base%.xz} ;;
+        *) break ;;
+    esac
+done
+for t in "${LAYERS[@]}"; do command -v "$t" >/dev/null || die "$t is not installed"; done
+if [[ " ${LAYERS[*]} " == *" age "* ]]; then
+    [[ -n $SET_IDENTITY ]] || die "$NAME is encrypted. Give the private key: --key FILE"
+    [[ -r $SET_IDENTITY ]] || die "cannot read the private key $SET_IDENTITY"
+fi
+IS_TAR=0; [[ $base == *.tar ]] && IS_TAR=1
+(( IS_TAR || ! ${#ONLY[@]} )) || die "$NAME is not a tar archive, so --only cannot pick files from it"
+
+# --- where it goes -----------------------------------------------------------
+
+[[ -n $INTO ]] || INTO="$PWD/$SET-restore-$(grep -oE '[0-9]{4}-[0-9]{2}-[0-9]{2}' <<<"$NAME" | head -1)"
+if [[ -e $INTO ]]; then
+    [[ -d $INTO && -z $(ls -A -- "$INTO") ]] || die "$INTO already exists and is not empty; pick another --into"
+fi
+mkdir -p -- "$INTO" || die "cannot create $INTO"
+INTO=$(readlink -f -- "$INTO")
+
+free=$(df -Pk "$INTO" | awk 'NR==2 {print $4 * 1024}')
+[[ $SIZE =~ ^[0-9]+$ ]] && (( free < SIZE * 2 )) &&
+    say "Warning: $INTO has $(numfmt --to=iec "$free") free; the archive alone is $(numfmt --to=iec "$SIZE")."
+
+say "Restoring $NAME ($(numfmt --to=iec "$SIZE" 2>/dev/null || echo "$SIZE")) from the $FROM copy"
+say "  into $INTO"
+
+if [[ $FROM == drive ]]; then
+    TMPD=$(mktemp -d "$INTO/.pd-restore.XXXXXX") || die "cannot create a download folder in $INTO"
+    trap 'rm -rf -- "${TMPD:?}"' EXIT
+    say "  downloading..."
+    timeout "$DRILL_TIMEOUT" proton-drive filesystem download "$SET_DRIVE/$NAME" "$TMPD" </dev/null >/dev/null 2>&1 ||
+        die "the download of $NAME failed"
+    FILE="$TMPD/$NAME"
+    [[ -f $FILE ]] || die "the download said it worked, but $NAME is not there"
+else
+    FILE="$DIR/$NAME"
+fi
+
+# No cat at the end of the chain: some coreutils builds fail it pipe to pipe.
+layer() { # INDEX
+    case ${LAYERS[$1]} in
+        age)  age -d -i "$SET_IDENTITY" ;;
+        zstd) zstd -dqc ;;
+        gzip) gzip -dc ;;
+        xz)   xz -dc ;;
+    esac
+}
+peel() { # INDEX
+    local i=$1
+    if (( i >= ${#LAYERS[@]} )); then cat
+    elif (( i == ${#LAYERS[@]} - 1 )); then layer "$i"
+    else layer "$i" | peel $((i + 1)); fi
+}
+
+say "  unpacking..."
+if (( IS_TAR )); then
+    # --no-anchored: Documents/taxes matches ./Documents/taxes as well.
+    members=()
+    for p in "${ONLY[@]}"; do p=${p#./}; members+=("${p#/}"); done
+    peel 0 <"$FILE" | tar -xf - -C "$INTO" ${members[@]:+--no-anchored} -- "${members[@]}" ||
+        die "unpacking failed (wrong key, a damaged archive, or --only matched nothing)"
+    count=$(find "$INTO" -path "$INTO/.pd-restore.*" -prune -o -type f -print | wc -l)
+else
+    peel 0 <"$FILE" >"$INTO/$base" || die "decoding $NAME failed (wrong key, or a damaged archive)"
+    count=1
+fi
+
+say "Done: $count file(s) in $INTO"
+say "Nothing outside that folder was touched. Copy back what you need."
+exit 0
