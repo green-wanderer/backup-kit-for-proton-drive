@@ -5,6 +5,6 @@ Description=Copy backups to the mirror disk
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/pd-mirror
+ExecStart=%h/.local/bin/bpd-mirror
 Nice=10
 IOSchedulingClass=idle

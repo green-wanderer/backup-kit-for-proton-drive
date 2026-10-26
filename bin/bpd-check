@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# pd-check - list the backup sets that need attention. Silent when all is well.
+# bpd-check - list the backup sets that need attention. Silent when all is well.
 #
-# Usage: pd-check [--notify] [--all]
+# Usage: bpd-check [--notify] [--all]
 #
 #   --notify   also send each warning as a desktop notification
 #   --all      print healthy sets too
@@ -10,10 +10,10 @@
 # ~/.bashrc or ~/.zshrc and see the warning whenever you open a terminal.
 # Warns when a set's last run failed, its newest archive is not on Drive, it
 # has gone stale_days without a run that archived or found nothing changed,
-# drill_days without a passing pd-drill, or mirror_stale_days without a good
-# pd-mirror (for sets with mirror =).
+# drill_days without a passing bpd-drill, or mirror_stale_days without a good
+# bpd-mirror (for sets with mirror =).
 
-PROG=pd-check
+PROG=bpd-check
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -38,58 +38,58 @@ bad() {
 ok() { (( ALL )) && printf '  %s\n' "$1"; return 0; }
 
 mapfile -t sets < <(list_sets)
-(( ${#sets[@]} )) || { bad "no backup sets yet. Run: pd-init"; exit 0; }
+(( ${#sets[@]} )) || { bad "no backup sets yet. Run: bpd-init"; exit 0; }
 
 for s in "${sets[@]}"; do
     WARNED=0
     load_set "$s" || { bad "$s: config is broken: $LOAD_ERR"; continue; }
     read_status "$s"
     if [[ -z $ST_local ]]; then
-        (( SET_STALE_DAYS == 0 )) || bad "$s: never backed up. Run: pd-backup $s"
+        (( SET_STALE_DAYS == 0 )) || bad "$s: never backed up. Run: bpd-backup $s"
         continue
     fi
-    [[ $ST_local == FAIL ]] && bad "$s: last backup FAILED: $ST_message. Run: pd-backup $s"
-    [[ $ST_local == PARTIAL ]] && bad "$s: last backup was PARTIAL (its source was incomplete). Run: pd-backup $s"
+    [[ $ST_local == FAIL ]] && bad "$s: last backup FAILED: $ST_message. Run: bpd-backup $s"
+    [[ $ST_local == PARTIAL ]] && bad "$s: last backup was PARTIAL (its source was incomplete). Run: bpd-backup $s"
 
     case $ST_push in
-        PENDING) bad "$s: newest archive is not on Proton Drive: $ST_message. Then: pd-backup --push-only $s" ;;
-        UNKNOWN) bad "$s: could not confirm the newest archive reached Drive. Run: pd-backup --push-only $s" ;;
+        PENDING) bad "$s: newest archive is not on Proton Drive: $ST_message. Then: bpd-backup --push-only $s" ;;
+        UNKNOWN) bad "$s: could not confirm the newest archive reached Drive. Run: bpd-backup --push-only $s" ;;
     esac
 
     newest=$(local_archives "$SET_LOCAL" "$s" | tail -1)
     if [[ -z $newest ]]; then
-        bad "$s: no local archive in $SET_LOCAL. Run: pd-backup $s"
+        bad "$s: no local archive in $SET_LOCAL. Run: bpd-backup $s"
     else
         # A run that found nothing changed counts as current too.
         seen=$(stat -c %Y "$SET_LOCAL/$newest")
         checked=$(cat "$STATE_DIR/$s.checked" 2>/dev/null)
         [[ $checked =~ ^[0-9]+$ ]] && (( checked > seen )) && seen=$checked
         age=$(days_since "$seen")
-        (( SET_STALE_DAYS > 0 && age >= SET_STALE_DAYS )) && bad "$s: last backup run was $age days ago. Run: pd-backup $s"
+        (( SET_STALE_DAYS > 0 && age >= SET_STALE_DAYS )) && bad "$s: last backup run was $age days ago. Run: bpd-backup $s"
     fi
 
     if [[ -n $SET_MIRROR ]]; then
         read_mirror "$s"
         msince=$(days_since "$MR_time")
         if [[ -z $msince ]]; then
-            bad "$s: never mirrored. Run: pd-mirror $s"
+            bad "$s: never mirrored. Run: bpd-mirror $s"
         elif [[ $MR_result == FAIL ]]; then
-            bad "$s: last mirror FAILED: $MR_message. Run: pd-mirror $s"
+            bad "$s: last mirror FAILED: $MR_message. Run: bpd-mirror $s"
         elif (( msince >= MIRROR_STALE_DAYS )); then
-            bad "$s: last mirrored $msince days ago. Run: pd-mirror $s"
+            bad "$s: last mirrored $msince days ago. Run: bpd-mirror $s"
         fi
     fi
 
     read_drill "$s"
     since=$(days_since "$DR_passed")
     if [[ $DR_result == FAIL ]]; then
-        bad "$s: last restore drill FAILED: $DR_message. Run: pd-drill $s"
+        bad "$s: last restore drill FAILED: $DR_message. Run: bpd-drill $s"
     elif (( SET_DRILL_DAYS == 0 )); then
         :
     elif [[ -z $since ]]; then
-        bad "$s: never restore-drilled. Run: pd-drill $s"
+        bad "$s: never restore-drilled. Run: bpd-drill $s"
     elif (( since >= SET_DRILL_DAYS )); then
-        bad "$s: last restore drill was $since days ago. Run: pd-drill $s"
+        bad "$s: last restore drill was $since days ago. Run: bpd-drill $s"
     fi
 
     (( WARNED )) || ok "$s: ${ST_archive:-?}, push ${ST_push:-?}, drilled ${since:-never} days ago"

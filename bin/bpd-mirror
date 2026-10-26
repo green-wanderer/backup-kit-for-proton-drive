@@ -1,26 +1,26 @@
 #!/usr/bin/env bash
-# pd-mirror - copy each set's archives to a second disk, checked and pruned.
+# bpd-mirror - copy each set's archives to a second disk, checked and pruned.
 #
-# Usage: pd-mirror [--dry-run] [SET...]
-#        pd-mirror --init DIR
+# Usage: bpd-mirror [--dry-run] [SET...]
+#        bpd-mirror --init DIR
 #
 # For every set with mirror = DIR (or just the SETs named): copies the local
 # archives the mirror does not have yet, compares sha256 after each copy, then
-# applies the set's keep tiers to the mirror with pd-prune --mirror.
+# applies the set's keep tiers to the mirror with bpd-prune --mirror.
 #
-# A mirror folder is only written to below a .pd-mirror marker. Make one with
+# A mirror folder is only written to below a .bpd-mirror marker. Make one with
 # --init on the mounted drive, so an unmounted drive's empty mount point is never filled.
 #
 # Exit: 0 done (sets whose drive is absent are skipped), 1 something failed.
 
-PROG=pd-mirror
+PROG=bpd-mirror
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
 
 if [[ $1 == --init ]]; then
-    [[ -d $2 ]] || die "usage: pd-mirror --init DIR (an existing folder on the mounted drive)"
-    touch "$2/.pd-mirror" && say "marked $2 as a mirror"
+    [[ -d $2 ]] || die "usage: bpd-mirror --init DIR (an existing folder on the mounted drive)"
+    touch "$2/.bpd-mirror" && say "marked $2 as a mirror"
     exit 0
 fi
 
@@ -39,7 +39,7 @@ for s in "${sets[@]}"; do
     load_set "$s" || { warn "$LOAD_ERR"; failed=1; continue; }
     [[ -n $SET_MIRROR ]] || continue
     if ! mirror_root "$SET_MIRROR" >/dev/null; then
-        say "$s: skipped, no .pd-mirror marker at or above $SET_MIRROR (drive not mounted?)"
+        say "$s: skipped, no .bpd-mirror marker at or above $SET_MIRROR (drive not mounted?)"
         continue
     fi
     (( DRY )) || mkdir -p "$SET_MIRROR" || { record "$s" FAIL "cannot create $SET_MIRROR"; failed=1; continue; }
@@ -68,12 +68,12 @@ for s in "${sets[@]}"; do
         failed=1
         continue
     fi
-    (( DRY )) && { "$HERE/pd-prune" --dry-run --mirror "$s"; continue; }
-    if "$HERE/pd-prune" --mirror "$s" >/dev/null; then
+    (( DRY )) && { "$HERE/bpd-prune" --dry-run --mirror "$s"; continue; }
+    if "$HERE/bpd-prune" --mirror "$s" >/dev/null; then
         say "$s: copied $copied, mirror pruned"
         record "$s" OK "copied $copied"
     else
-        say "$s: copied $copied, but pruning the mirror failed (see pd-prune --dry-run --mirror $s)"
+        say "$s: copied $copied, but pruning the mirror failed (see bpd-prune --dry-run --mirror $s)"
         record "$s" FAIL "pruning the mirror failed"
         failed=1
     fi

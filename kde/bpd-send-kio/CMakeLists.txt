@@ -1,7 +1,7 @@
 # Build:   cmake -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build
 # Install: sudo cmake --install build && kbuildsycoca6
 cmake_minimum_required(VERSION 3.16)
-project(pd-send-kio VERSION 1.0 LANGUAGES CXX)
+project(bpd-send-kio VERSION 1.0 LANGUAGES CXX)
 
 find_package(ECM 6.0.0 REQUIRED NO_MODULE)
 set(CMAKE_MODULE_PATH ${ECM_MODULE_PATH})
@@ -18,5 +18,5 @@ find_package(KF6 REQUIRED COMPONENTS CoreAddons KIO)
 
 set(CMAKE_AUTOMOC ON)
 
-kcoreaddons_add_plugin(pd-send-kio INSTALL_NAMESPACE "kf6/kfileitemaction" SOURCES pd-send-kio.cpp)
-target_link_libraries(pd-send-kio Qt6::Widgets KF6::KIOWidgets)
+kcoreaddons_add_plugin(bpd-send-kio INSTALL_NAMESPACE "kf6/kfileitemaction" SOURCES bpd-send-kio.cpp)
+target_link_libraries(bpd-send-kio Qt6::Widgets KF6::KIOWidgets)

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# pd-drill - restore a backup, to prove that you can.
+# bpd-drill - restore a backup, to prove that you can.
 #
-# Usage: pd-drill [--oldest|--newest] [--local|--mirror] [--keep] [--yes] [SET]
-#        pd-drill --status     one line per set: ok, due, FAIL, never or off
+# Usage: bpd-drill [--oldest|--newest] [--local|--mirror] [--keep] [--yes] [SET]
+#        bpd-drill --status     one line per set: ok, due, FAIL, never or off
 #
 # With no SET, drills the set that has gone longest without a passing drill.
 # It downloads one archive from Proton Drive, decodes it by its extensions (.age
@@ -11,7 +11,7 @@
 #
 # For a tar it then checks require = and forbid =, and restores a random sample
 # of files at the sizes tar recorded. With check = it extracts everything and
-# runs that command inside the restored tree; exit 0 passes. pd-check keeps the
+# runs that command inside the restored tree; exit 0 passes. bpd-check keeps the
 # result and nags after drill_days.
 #
 # A set with push = no is drilled from its mirror, or its local folder if it
@@ -23,7 +23,7 @@
 #
 # Exit: 0 passed, 1 failed, 2 bad usage, 3 you declined the download.
 
-PROG=pd-drill
+PROG=bpd-drill
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -106,7 +106,7 @@ case $FROM in
     drive)
         [[ $SET_PUSH == yes ]] || abort "$SET has push = no; try --local or --mirror"
         command -v jq >/dev/null || abort "jq is not installed"
-        drive_ready || abort "Proton Drive is not reachable. Run pd-session first."
+        drive_ready || abort "Proton Drive is not reachable. Run bpd-session first."
         listing=$(drive_ls "$SET_DRIVE") || fail "could not list $SET_DRIVE: no off-site copy found"
         RE=$(archive_re "$SET")
         mapfile -t found < <(grep -P '^file\t' <<<"$listing" | cut -f2,3 | sort -t$'\t' -k2 |
@@ -115,7 +115,7 @@ case $FROM in
         DIR=$SET_LOCAL
         if [[ $FROM == mirror ]]; then
             [[ -n $SET_MIRROR ]] || abort "$SET has no mirror ="
-            mirror_root "$SET_MIRROR" >/dev/null || abort "the mirror is not mounted (no .pd-mirror marker above $SET_MIRROR)"
+            mirror_root "$SET_MIRROR" >/dev/null || abort "the mirror is not mounted (no .bpd-mirror marker above $SET_MIRROR)"
             DIR=$SET_MIRROR
         fi
         mapfile -t found < <(local_archives "$DIR" "$SET" | while IFS= read -r n; do

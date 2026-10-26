@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
-# pd-doctor - check that pd-kit has what it needs, and say how to fix what it does not.
+# bpd-doctor - check that bpd-kit has what it needs, and say how to fix what it does not.
 #
-# Usage: pd-doctor           tools, Proton Drive login, every set, and the backups
-#        pd-doctor --tools   tools only (no network, no sets)
+# Usage: bpd-doctor           tools, Proton Drive login, every set, and the backups
+#        bpd-doctor --tools   tools only (no network, no sets)
 #
 # Exit: 0 nothing to fix, 1 something to fix.
 
-PROG=pd-doctor
+PROG=bpd-doctor
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -42,7 +42,7 @@ install_hint() { # PACKAGE...
     else printf 'install with your package manager: %s' "$*"; fi
 }
 
-say "pd-kit $(cat "$HERE/../VERSION" 2>/dev/null || echo '?')"
+say "bpd-kit $(cat "$HERE/../VERSION" 2>/dev/null || echo '?')"
 say "Tools:"
 missing=()
 for t in tar zstd jq age; do
@@ -79,12 +79,12 @@ elif drive_ready; then
     used=$(timeout "$LIST_TIMEOUT" proton-drive filesystem size -j "$DRIVE_ROOT" </dev/null 2>/dev/null | jq -r '.size // empty' 2>/dev/null)
     [[ $used =~ ^[0-9]+$ ]] && note "your files use $(numfmt --to=iec "$used"), trash included"
 else
-    fix "not logged in (or offline). Run: pd-session"
+    fix "not logged in (or offline). Run: bpd-session"
 fi
 
 say "Sets:"
 mapfile -t sets < <(list_sets)
-(( ${#sets[@]} )) || fix "no backup sets yet. Run: pd-init"
+(( ${#sets[@]} )) || fix "no backup sets yet. Run: bpd-init"
 for s in "${sets[@]}"; do
     if ! load_set "$s"; then fix "$s: $LOAD_ERR"; continue; fi
     problems=0
@@ -104,17 +104,17 @@ for s in "${sets[@]}"; do
     fi
     [[ -z $SET_RECIPIENTS && $SET_PUSH == yes && $SET_MODE == tar ]] && note "$s: not encrypted with your own key (Proton's encryption still applies)"
     if (( SET_STALE_DAYS > 0 )) && command -v systemctl >/dev/null; then
-        systemctl --user is-enabled "pd-backup@$s.timer" >/dev/null 2>&1 ||
-            systemctl --user is-enabled "pd-backup-$s.timer" >/dev/null 2>&1 ||
-            note "$s: not scheduled. Run: systemctl --user enable --now pd-backup@$s.timer"
+        systemctl --user is-enabled "bpd-backup@$s.timer" >/dev/null 2>&1 ||
+            systemctl --user is-enabled "bpd-backup-$s.timer" >/dev/null 2>&1 ||
+            note "$s: not scheduled. Run: systemctl --user enable --now bpd-backup@$s.timer"
     fi
     (( problems )) || ok "$s"
 done
 
-# The backups themselves: what pd-check would warn about.
+# The backups themselves: what bpd-check would warn about.
 if (( ${#sets[@]} )); then
     say "Backups:"
-    warnings=$("$HERE/pd-check")
+    warnings=$("$HERE/bpd-check")
     if [[ -n $warnings ]]; then
         while IFS= read -r w; do fix "${w#! }"; done <<<"$warnings"
     else

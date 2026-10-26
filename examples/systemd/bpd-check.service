@@ -4,4 +4,4 @@ Description=Notify about backups that need attention
 
 [Service]
 Type=oneshot
-ExecStart=%h/.local/bin/pd-check --notify
+ExecStart=%h/.local/bin/bpd-check --notify

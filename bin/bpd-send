@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
-# pd-send - send files to a Proton Drive folder, or get files from one.
+# bpd-send - send files to a Proton Drive folder, or get files from one.
 #
-# Usage: pd-send --to FOLDER FILE...            upload, then confirm each file arrived
-#        pd-send --pick FILE...                 choose the folder from your Drive tree
-#        pd-send --mkdir [--to PARENT] FILE...  make a new folder, then send into it
-#        pd-send --get [PATH...]                browse Drive, download next to PATH
-#        pd-send --refresh                      re-read the folder tree (pd-send-menu)
+# Usage: bpd-send --to FOLDER FILE...            upload, then confirm each file arrived
+#        bpd-send --pick FILE...                 choose the folder from your Drive tree
+#        bpd-send --mkdir [--to PARENT] FILE...  make a new folder, then send into it
+#        bpd-send --get [PATH...]                browse Drive, download next to PATH
+#        bpd-send --refresh                      re-read the folder tree (bpd-send-menu)
 #
 # The Dolphin menu calls these. Started from a terminal it prompts there;
 # otherwise it uses kdialog and desktop notifications. send_conflict decides
 # what happens when a file with the same name is already on Drive.
 
-PROG=pd-send
+PROG=bpd-send
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -68,7 +68,7 @@ ui_input() { # PROMPT DEFAULT -> text; 1 if cancelled
 
 # --- the cached folder tree --------------------------------------------------
 
-ensure_model() { [[ -s $MODEL ]] || "$HERE/pd-send-menu" --quiet; }
+ensure_model() { [[ -s $MODEL ]] || "$HERE/bpd-send-menu" --quiet; }
 
 children() { # PATH -> child paths, sorted by name
     P=$1 awk -F'\t' '$1 == "N" && $3 == ENVIRON["P"] { print $4 "\t" $2 }' "$MODEL" 2>/dev/null |
@@ -96,7 +96,7 @@ pick_folder() { # [PROMPT] -> DEST; exits quietly on cancel
             __here__)    DEST=$cur; return ;;
             __up__)      cur=${cur%/*} ;;
             __mkdir__)   make_folder "$cur" && { DEST=$NEW; return; } ;;
-            __refresh__) "$HERE/pd-send-menu" --quiet || ui_error "Could not re-read the folder list." ;;
+            __refresh__) "$HERE/bpd-send-menu" --quiet || ui_error "Could not re-read the folder list." ;;
             __type__)    DEST=$(ui_input "Drive folder:" "$cur/") || exit 0
                          DEST=${DEST%/}; [[ $DEST == /* ]] && return ;;
             *)           if [[ -n $(children "$choice") ]]; then cur=$choice; else DEST=$choice; return; fi ;;
@@ -193,10 +193,10 @@ download() { # DRIVE_PATH LOCAL_DIR - never overwrites; a clash gets a new name
 # --- main --------------------------------------------------------------------
 
 FILES=("$@")
-[[ $MODE == refresh ]] && exec "$HERE/pd-send-menu"
+[[ $MODE == refresh ]] && exec "$HERE/bpd-send-menu"
 if ! drive_ready; then
-    notify critical "Proton Drive not reachable" "Run pd-session in a terminal to log in again."
-    ui_error "Proton Drive is not reachable. Run pd-session in a terminal."
+    notify critical "Proton Drive not reachable" "Run bpd-session in a terminal to log in again."
+    ui_error "Proton Drive is not reachable. Run bpd-session in a terminal."
     exit 1
 fi
 

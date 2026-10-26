@@ -1,14 +1,14 @@
-# common.sh - helpers shared by the pd-* scripts. Sourced, not run.
+# common.sh - helpers shared by the bpd-* scripts. Sourced, not run.
 
-CONF_DIR="${PD_CONF_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/pd-backup}"
+CONF_DIR="${BPD_CONF_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bpd-backup}"
 
 # Settings and their defaults. Override any of them in $CONF_DIR/settings.conf;
 # examples/settings.conf lists every one.
-STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/pd-backup"
-CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/pd-backup"
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/bpd-backup"
+CACHE_DIR="${XDG_CACHE_HOME:-$HOME/.cache}/bpd-backup"
 LOCAL_ROOT="$HOME/backups"
 DRIVE_ROOT=/my-files
-MENU_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/kio/servicemenus/pd-send.desktop"
+MENU_FILE="${XDG_DATA_HOME:-$HOME/.local/share}/kio/servicemenus/bpd-send.desktop"
 MENU_MODE=auto
 MENU_DEPTH=3
 MENU_MAX=200
@@ -148,7 +148,7 @@ drive_problem() {
         { say "the Proton Drive CLI is not installed: $CLI_URL"; return 0; }
     command -v jq >/dev/null 2>&1 || { say "jq is not installed"; return 0; }
     drive_ready && return 1
-    say "logged out of Proton Drive, or offline (pd-session logs in)"
+    say "logged out of Proton Drive, or offline (bpd-session logs in)"
 }
 
 drive_mkdir_p() { # /my-files/a/b/c - errors ignored; the upload after it will say
@@ -166,14 +166,14 @@ drive_mkdir_p() { # /my-files/a/b/c - errors ignored; the upload after it will s
 
 # load_set NAME reads $CONF_DIR/sets/NAME.conf: "key = value" lines, full-line
 # comments with #, ~ expanded. Nothing is eval'd; before = and check = are run
-# as commands, by pd-backup and pd-drill, and nothing else. Any line it cannot use is an error, never a
+# as commands, by bpd-backup and bpd-drill, and nothing else. Any line it cannot use is an error, never a
 # silent default: keep= decides what gets deleted.
 # Returns 1 with the reason in LOAD_ERR.
 load_set() {
     local file="$CONF_DIR/sets/$1.conf" n=0 line key val
     LOAD_ERR=""
     [[ $1 =~ ^[A-Za-z0-9-]+$ ]] || { LOAD_ERR="bad set name '$1' (letters, digits, -)"; return 1; }
-    [[ -r $file ]] || { LOAD_ERR="no set called $1 ($file). Make one with pd-init"; return 1; }
+    [[ -r $file ]] || { LOAD_ERR="no set called $1 ($file). Make one with bpd-init"; return 1; }
 
     SET_NAME=$1 SET_SOURCE="" SET_DRIVE="" SET_RECIPIENTS="" SET_IDENTITY=""
     SET_LOCAL="$LOCAL_ROOT/$1" SET_STALE_DAYS=$DEFAULT_STALE_DAYS SET_KEEP_LOCAL=$DEFAULT_KEEP_LOCAL
@@ -244,12 +244,12 @@ load_set() {
     return 0
 }
 
-# mirror_root DIR -> the nearest folder at or above DIR holding a .pd-mirror
-# marker (made by pd-mirror --init). An unmounted drive's mount point has none.
+# mirror_root DIR -> the nearest folder at or above DIR holding a .bpd-mirror
+# marker (made by bpd-mirror --init). An unmounted drive's mount point has none.
 mirror_root() {
     local d=$1
     while [[ -n $d ]]; do
-        [[ -f $d/.pd-mirror ]] && { printf '%s\n' "$d"; return 0; }
+        [[ -f $d/.bpd-mirror ]] && { printf '%s\n' "$d"; return 0; }
         d=${d%/*}
     done
     return 1
@@ -311,6 +311,6 @@ days_since() { # EPOCH -> whole days, or empty for an empty input
 }
 
 if ! load_settings; then
-    [[ $PROG == pd-check ]] && { printf '! %s\n' "$LOAD_ERR"; exit 2; }
+    [[ $PROG == bpd-check ]] && { printf '! %s\n' "$LOAD_ERR"; exit 2; }
     die "$LOAD_ERR"
 fi

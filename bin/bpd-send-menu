@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# pd-send-menu - build Dolphin's "Send to Proton Drive" menu from your Drive folders.
+# bpd-send-menu - build Dolphin's "Send to Proton Drive" menu from your Drive folders.
 #
-# Usage: pd-send-menu [--depth N] [--quiet]
-#        pd-send-menu --remove
+# Usage: bpd-send-menu [--depth N] [--quiet]
+#        bpd-send-menu --remove
 #
 # Walks your Drive folders (menu_depth levels, at most menu_max folders) into
 # CACHE_DIR/menu.tsv. The KDE plugin in kde/ reads that file and shows the
@@ -10,7 +10,7 @@
 # it also writes a one-level service menu to menu_file. Run it again when your
 # folders change; "Refresh folder list" in the menu does the same.
 
-PROG=pd-send-menu
+PROG=bpd-send-menu
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -27,7 +27,7 @@ while (( $# )); do
     shift
 done
 command -v jq >/dev/null || die "jq is not installed"
-drive_ready || die "Proton Drive is not reachable; run pd-session"
+drive_ready || die "Proton Drive is not reachable; run bpd-session"
 
 # Breadth-first, one listing per folder.
 folders=("$DRIVE_ROOT") levels=(0)
@@ -42,7 +42,7 @@ done
 
 mkdir -p "$CACHE_DIR"
 {
-    printf 'R\t%s\nX\t%s\n' "$DRIVE_ROOT" "$HERE/pd-send"
+    printf 'R\t%s\nX\t%s\n' "$DRIVE_ROOT" "$HERE/bpd-send"
     for (( i = 1; i < ${#folders[@]}; i++ )); do
         printf 'N\t%s\t%s\t%s\n' "${folders[i]}" "${folders[i]%/*}" "${folders[i]##*/}"
     done
@@ -52,7 +52,7 @@ plugin_installed() {
     local d
     for d in "$(qtpaths6 --query QT_INSTALL_PLUGINS 2>/dev/null)" /usr/lib/*/qt6/plugins /usr/lib/qt6/plugins \
              /usr/local/lib/*/qt6/plugins /usr/local/lib/qt6/plugins /usr/local/lib/plugins; do
-        [[ -n $d && -e $d/kf6/kfileitemaction/pd-send-kio.so ]] && return 0
+        [[ -n $d && -e $d/kf6/kfileitemaction/bpd-send-kio.so ]] && return 0
     done
     return 1
 }
@@ -73,7 +73,7 @@ exec_arg() {
 }
 
 if (( flat )); then
-    pdsend=$(exec_arg "$HERE/pd-send")
+    pdsend=$(exec_arg "$HERE/bpd-send")
     mkdir -p "${MENU_FILE%/*}"
     {
         ids="pick;mkdir;get;"

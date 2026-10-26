@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.0 (2026-10-26)
+
+- Renamed: the repo is now `backup-kit-for-proton-drive` (the old URL redirects), and every
+  command `pd-X` is now `bpd-X`. Config, state and cache move from `pd-backup` to `bpd-backup`
+  under `~/.config`, `~/.local/state` and `~/.cache`; `BPD_CONF_DIR` replaces `PD_CONF_DIR`.
+  Upgrading: `bash install.sh --uninstall` from 1.x, move those three folders, then install.
+- `bpd-init` warns when a new set's Drive folder already has backups (another computer?).
+- README: two computers need their own set names.
+
 ## 1.0.1 (2026-10-25)
 
 - README: states that this is an unofficial project, not affiliated with Proton, and

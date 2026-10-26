@@ -1,9 +1,9 @@
 /*
- * pd-send-kio - Dolphin right-click menu that shows your Proton Drive folder
- * tree as nested menus and hands the choice to pd-send.
+ * bpd-send-kio - Dolphin right-click menu that shows your Proton Drive folder
+ * tree as nested menus and hands the choice to bpd-send.
  *
  * A .desktop service menu can only be one level deep, which is why this is a
- * plugin. It draws the menu from CACHE_DIR/menu.tsv, written by pd-send-menu,
+ * plugin. It draws the menu from CACHE_DIR/menu.tsv, written by bpd-send-menu,
  * and never touches the network: it runs while the menu is being drawn.
  */
 
@@ -32,7 +32,7 @@ QString envDir(const char *var, const QString &fallback)
 
 // The few settings this needs, from the same settings.conf the scripts read.
 struct Settings {
-    QString cacheDir = envDir("XDG_CACHE_HOME", QStringLiteral("/.cache")) + QStringLiteral("/pd-backup");
+    QString cacheDir = envDir("XDG_CACHE_HOME", QStringLiteral("/.cache")) + QStringLiteral("/bpd-backup");
     int perLevel = 60;
     int depth = 3;
 };
@@ -40,9 +40,9 @@ struct Settings {
 Settings readSettings()
 {
     Settings s;
-    QString confDir = QString::fromLocal8Bit(qgetenv("PD_CONF_DIR"));
+    QString confDir = QString::fromLocal8Bit(qgetenv("BPD_CONF_DIR"));
     if (confDir.isEmpty()) {
-        confDir = envDir("XDG_CONFIG_HOME", QStringLiteral("/.config")) + QStringLiteral("/pd-backup");
+        confDir = envDir("XDG_CONFIG_HOME", QStringLiteral("/.config")) + QStringLiteral("/bpd-backup");
     }
     QFile f(confDir + QStringLiteral("/settings.conf"));
     if (!f.open(QIODevice::ReadOnly | QIODevice::Text)) {
@@ -78,7 +78,7 @@ Settings readSettings()
     return s;
 }
 
-// menu.tsv: "R root", "X path-to-pd-send", then "N path parent name" per folder.
+// menu.tsv: "R root", "X path-to-bpd-send", then "N path parent name" per folder.
 struct Model {
     QString root;
     QString exe;
@@ -166,12 +166,12 @@ private:
 
 } // namespace
 
-class PdSendKio : public KAbstractFileItemActionPlugin
+class BpdSendKio : public KAbstractFileItemActionPlugin
 {
     Q_OBJECT
 
 public:
-    PdSendKio(QObject *parent, const QVariantList &)
+    BpdSendKio(QObject *parent, const QVariantList &)
         : KAbstractFileItemActionPlugin(parent)
     {
     }
@@ -192,7 +192,7 @@ public:
         const Settings settings = readSettings();
         const Model model = readModel(settings.cacheDir + QStringLiteral("/menu.tsv"));
         if (model.exe.isEmpty()) {
-            return {}; // pd-send-menu has not run yet
+            return {}; // bpd-send-menu has not run yet
         }
         const Builder b(model, settings, files);
 
@@ -212,6 +212,6 @@ public:
     }
 };
 
-K_PLUGIN_CLASS_WITH_JSON(PdSendKio, "pd-send-kio.json")
+K_PLUGIN_CLASS_WITH_JSON(BpdSendKio, "bpd-send-kio.json")
 
-#include "pd-send-kio.moc"
+#include "bpd-send-kio.moc"

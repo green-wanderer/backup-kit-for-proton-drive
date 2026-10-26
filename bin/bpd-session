@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
-# pd-session - log in to Proton Drive, prove the session works, list paused pushes.
+# bpd-session - log in to Proton Drive, prove the session works, list paused pushes.
 #
-# Usage: pd-session            log in, check, then list sets waiting on a push
-#        pd-session --check    check only: silent, exit 0 if Drive answers, 1 if not
-#        pd-session --status   check and list, without logging in
+# Usage: bpd-session            log in, check, then list sets waiting on a push
+#        bpd-session --check    check only: silent, exit 0 if Drive answers, 1 if not
+#        bpd-session --status   check and list, without logging in
 #
 # `proton-drive auth login` finishing is not proof the session works, so this
-# lists the drive root afterwards, the same way every pd-* script checks before it
+# lists the drive root afterwards, the same way every bpd-* script checks before it
 # touches Drive. --check is that check on its own, for your own scripts.
 
-PROG=pd-session
+PROG=bpd-session
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -26,7 +26,7 @@ case $1 in
 esac
 
 if ! drive_ready; then
-    say "Proton Drive is NOT reachable. Run pd-session to log in, or check the network."
+    say "Proton Drive is NOT reachable. Run bpd-session to log in, or check the network."
     exit 1
 fi
 say "Proton Drive is reachable."
@@ -38,7 +38,7 @@ for s in $(list_sets); do
         PENDING|UNKNOWN)
             (( waiting++ )) || say $'\nWaiting on a push:'
             say "  $s: ${ST_archive:-?} ($ST_message)"
-            say "      pd-backup --push-only $s" ;;
+            say "      bpd-backup --push-only $s" ;;
     esac
 done
 (( waiting )) || say "No pushes outstanding."

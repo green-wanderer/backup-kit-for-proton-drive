@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# pd-prune - grandfather-father-son retention for one set's archives on Proton Drive.
+# bpd-prune - grandfather-father-son retention for one set's archives on Proton Drive.
 #
-# Usage: pd-prune [--dry-run] [--max N] [--mirror] SET
+# Usage: bpd-prune [--dry-run] [--max N] [--mirror] SET
 #
 # keep = D W M Y in the set's conf. Newest first, it keeps the newest archive of
 # each of the last D days, then of each of the next W ISO weeks, M months and
@@ -13,7 +13,7 @@
 #
 # Exit: 0 done, 1 something could not be trashed or the cap was hit, 2 bad usage.
 
-PROG=pd-prune
+PROG=bpd-prune
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -27,12 +27,12 @@ while [[ $1 == -* ]]; do
         *) die "unknown option $1 (try -h)" ;;
     esac
 done
-[[ $# -eq 1 ]] || die "usage: pd-prune [--dry-run] [--max N] [--mirror] SET"
+[[ $# -eq 1 ]] || die "usage: bpd-prune [--dry-run] [--max N] [--mirror] SET"
 load_set "$1" || die "$LOAD_ERR"
 
 if (( MIRROR )); then
     [[ -n $SET_MIRROR ]] || die "$SET_NAME has no mirror ="
-    mirror_root "$SET_MIRROR" >/dev/null || die "no .pd-mirror marker at or above $SET_MIRROR (drive not mounted? pd-mirror --init)"
+    mirror_root "$SET_MIRROR" >/dev/null || die "no .bpd-mirror marker at or above $SET_MIRROR (drive not mounted? bpd-mirror --init)"
     [[ -d $SET_MIRROR ]] || { say "no archives in $SET_MIRROR"; exit 0; }
     WHERE=$SET_MIRROR
     list() { find "$WHERE" -maxdepth 1 -type f -printf 'file\t-\t%f\n'; }
@@ -93,7 +93,7 @@ say "${#names[@]} archives: keep $(( ${#names[@]} - ${#trash[@]} )), trash ${#tr
 (( DRY )) && { say "dry run: nothing changed"; exit 0; }
 if (( ${#trash[@]} > MAX )); then
     warn "would trash ${#trash[@]} files, over the cap of $MAX. Nothing touched. Check with --dry-run."
-    notify critical "pd-prune stopped: $SET_NAME" "Would trash ${#trash[@]} archives (cap $MAX). Nothing was touched."
+    notify critical "bpd-prune stopped: $SET_NAME" "Would trash ${#trash[@]} archives (cap $MAX). Nothing was touched."
     exit 1
 fi
 
@@ -109,7 +109,7 @@ done
 
 # Retention that quietly stops working is worse than none, so say it loudly.
 if (( failed )); then
-    notify critical "pd-prune failed: $SET_NAME" "$failed of ${#trash[@]} archives could not be trashed."
+    notify critical "bpd-prune failed: $SET_NAME" "$failed of ${#trash[@]} archives could not be trashed."
     exit 1
 fi
 if (( MIRROR )); then

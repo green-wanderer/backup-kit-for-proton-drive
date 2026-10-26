@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# pd-backup - archive one backup set, encrypt it, and push it to Proton Drive.
+# bpd-backup - archive one backup set, encrypt it, and push it to Proton Drive.
 #
-# Usage: pd-backup [--no-push] [--force] SET
-#        pd-backup --push-only SET    retry the push of the newest local archive
+# Usage: bpd-backup [--no-push] [--force] SET
+#        bpd-backup --push-only SET    retry the push of the newest local archive
 #
-# SET is ~/.config/pd-backup/sets/SET.conf (see examples/sets/).
+# SET is ~/.config/bpd-backup/sets/SET.conf (see examples/sets/).
 #
 # The set's before = command runs first, if it has one. Exit 3 from it means
 # "nothing to do" and the run ends quietly; exit 4 means "incomplete input":
@@ -16,14 +16,14 @@
 # With only_on_change = yes (always, for mode = file) an unchanged input makes no archive.
 #
 # After a push the copy on Drive is checked by size, and only then does
-# pd-prune run. push = no keeps the set local. The result goes to
-# STATE_DIR/SET.status for pd-check.
+# bpd-prune run. push = no keeps the set local. The result goes to
+# STATE_DIR/SET.status for bpd-check.
 #
 #   --force    archive even if the input has not changed
 #
 # Exit: 0 done (or push paused, with a notification), 1 failed, 2 bad usage.
 
-PROG=pd-backup
+PROG=bpd-backup
 [[ $1 == -h || $1 == --help ]] && { sed -n '2,/^$/s/^# \{0,1\}//p' "$0"; exit 0; }
 HERE=$(dirname "$(readlink -f "$0")")
 source "$HERE/../lib/common.sh"
@@ -39,7 +39,7 @@ while [[ $1 == -* ]]; do
     esac
     shift
 done
-[[ $# -eq 1 ]] || die "usage: pd-backup [--no-push|--push-only] [--force] SET"
+[[ $# -eq 1 ]] || die "usage: bpd-backup [--no-push|--push-only] [--force] SET"
 load_set "$1" || die "$LOAD_ERR"
 SET=$SET_NAME
 [[ $SET_PUSH == no && $MODE == full ]] && MODE=local
@@ -73,7 +73,7 @@ run_before() {
     [[ -n $SET_BEFORE ]] || return 0
     local rc=0
     log "running: $SET_BEFORE"
-    PD_SET=$SET PD_SOURCE=$SET_SOURCE PD_LOCAL=$SET_LOCAL PD_STATE=$STATE_DIR PD_PID=$$ \
+    BPD_SET=$SET BPD_SOURCE=$SET_SOURCE BPD_LOCAL=$SET_LOCAL BPD_STATE=$STATE_DIR BPD_PID=$$ \
         timeout "$BEFORE_TIMEOUT" bash -c "$SET_BEFORE" </dev/null >>"$LOG" 2>&1 9>&- || rc=$?
     case $rc in
         0) ;;
@@ -233,7 +233,7 @@ push() {
         log "push paused: $why"
         write_status "$SET" "$LOCAL_STATE" PENDING "$name" "$why"
         notify critical "Proton Drive push paused: $SET" \
-            "The local backup is safe. Cause: $why. Then: pd-backup --push-only $SET"
+            "The local backup is safe. Cause: $why. Then: bpd-backup --push-only $SET"
         exit 0
     fi
 
@@ -256,16 +256,16 @@ push() {
            else
                log "size mismatch on Drive: $remote bytes, local $size (upload rc=$rc)"
                write_status "$SET" "$LOCAL_STATE" PENDING "$name" "Drive copy is the wrong size"
-               notify critical "Backup push failed: $SET" "The copy on Drive is the wrong size. Retry: pd-backup --push-only $SET"
+               notify critical "Backup push failed: $SET" "The copy on Drive is the wrong size. Retry: bpd-backup --push-only $SET"
                exit 1
            fi ;;
         1) log "not on Drive after upload (rc=$rc)"
            write_status "$SET" "$LOCAL_STATE" PENDING "$name" "upload failed (rc=$rc)${said:+: $said}"
-           notify critical "Backup push failed: $SET" "${said:+$said. }The local backup is safe. Retry: pd-backup --push-only $SET"
+           notify critical "Backup push failed: $SET" "${said:+$said. }The local backup is safe. Retry: bpd-backup --push-only $SET"
            exit 1 ;;
         *) log "uploaded (rc=$rc) but Drive did not answer the check"
            write_status "$SET" "$LOCAL_STATE" UNKNOWN "$name" "could not confirm the upload"
-           notify normal "Backup push unconfirmed: $SET" "Drive did not answer. Check later with: pd-backup --push-only $SET"
+           notify normal "Backup push unconfirmed: $SET" "Drive did not answer. Check later with: bpd-backup --push-only $SET"
            exit 1 ;;
     esac
 
@@ -274,7 +274,7 @@ push() {
     if [[ $LOCAL_STATE == PARTIAL ]]; then
         log "partial archive: not pruning"
     else
-        "$HERE/pd-prune" "$SET" >>"$LOG" 2>&1 || log "WARNING: pd-prune failed, see $LOG"
+        "$HERE/bpd-prune" "$SET" >>"$LOG" 2>&1 || log "WARNING: bpd-prune failed, see $LOG"
     fi
 }
 
