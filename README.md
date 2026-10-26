@@ -78,11 +78,10 @@ You need that key file. `bpd-init` asks you to keep a copy off the computer
 
 Linux with GNU tools and systemd. `install.sh` checks for all of these:
 
-- bash 4+, GNU tar, `zstd`, `jq`, `age`
+- bash 4+, GNU tar, `zstd`, `jq`, `age`, `flock` (util-linux: one run per set at a time)
 - `proton-drive` (the CLI), tested with 0.9.0. To upgrade it, download the new version and
   run `bash install.sh /path/to/proton-drive`
-- optional: `flock` (stops two runs of the same set overlapping), `notify-send`
-  (notifications)
+- optional: `notify-send` (notifications)
 - optional, KDE only: Dolphin and `kdialog` for the right-click menu. On GNOME and other
   desktops everything else works the same; only the file manager menu is missing.
 

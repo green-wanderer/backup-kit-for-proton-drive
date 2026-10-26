@@ -45,7 +45,7 @@ install_hint() { # PACKAGE...
 say "bpd-kit $(cat "$HERE/../VERSION" 2>/dev/null || echo '?')"
 say "Tools:"
 missing=()
-for t in tar zstd jq age; do
+for t in tar zstd jq age flock; do
     if command -v "$t" >/dev/null; then ok "$t"; else fix "$t is missing"; missing+=("$(pkg "$t")"); fi
 done
 tar --version 2>/dev/null | grep -q GNU || fix "tar is not GNU tar"
@@ -57,7 +57,7 @@ else
     fix "proton-drive is missing. Download the Linux version from $CLI_URL,
         then run: bash $(readlink -f "$HERE/..")/install.sh (it finds and installs it)"
 fi
-for t in flock notify-send; do
+for t in notify-send; do
     command -v "$t" >/dev/null && ok "$t" || { note "$t is missing (optional)"; missing+=("$(pkg "$t")"); }
 done
 (( ${#missing[@]} )) && say "  To install: $(install_hint "${missing[@]}")"

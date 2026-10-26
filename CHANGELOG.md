@@ -1,11 +1,19 @@
 # Changelog
 
+## 2.1.0 (2026-10-26)
+
+- `flock` is required: `bpd-backup` refuses to run without it (a failed status and a
+  notification), and `bpd-doctor` and `install.sh` report it as a FIX. It was optional, and
+  missing it silently dropped the lock that stops two runs of one set overlapping.
+- CHANGELOG: 2.0.0's upgrade note now includes the mirror marker step, as its release notes did.
+
 ## 2.0.0 (2026-10-26)
 
 - Renamed: the repo is now `backup-kit-for-proton-drive` (the old URL redirects), and every
   command `pd-X` is now `bpd-X`. Config, state and cache move from `pd-backup` to `bpd-backup`
   under `~/.config`, `~/.local/state` and `~/.cache`; `BPD_CONF_DIR` replaces `PD_CONF_DIR`.
-  Upgrading: `bash install.sh --uninstall` from 1.x, move those three folders, then install.
+  Upgrading: `bash install.sh --uninstall` from 1.x, move those three folders, rename a mirror
+  drive's `.pd-mirror` marker to `.bpd-mirror`, then install.
 - `bpd-init` warns when a new set's Drive folder already has backups (another computer?).
 - README: two computers need their own set names.
 

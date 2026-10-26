@@ -50,10 +50,15 @@ LOG="$STATE_DIR/$SET.log"
 log() { printf '%s %s\n' "$(date '+%F %T')" "$*" | tee -a "$LOG"; }
 
 # One run per set at a time. A second run steps aside and leaves the status alone.
-if command -v flock >/dev/null; then
-    exec 9>"$STATE_DIR/$SET.lock"
-    flock -n 9 || { log "another run of $SET is in progress; not starting"; exit 0; }
+# No flock, no run: without the lock two runs overlap unseen. Not fail(): unlocked,
+# the scratch source may belong to a run still in progress, so it is left alone.
+if ! command -v flock >/dev/null; then
+    msg="flock is missing (package util-linux); not running without the per-set lock"
+    log "FAILED: $msg"; write_status "$SET" FAIL OFF "-" "$msg"
+    notify critical "Backup failed: $SET" "$msg"; exit 1
 fi
+exec 9>"$STATE_DIR/$SET.lock"
+flock -n 9 || { log "another run of $SET is in progress; not starting"; exit 0; }
 
 # scratch = yes: the source is a hook's staging folder, emptied after every run.
 clear_scratch() {
