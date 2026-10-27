@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.2 (2026-10-27)
+
+- Nothing changes in how the kit works. The automatic code check (the README badge) now
+  runs on every update.
+
 ## 2.1.1 (2026-10-27)
 
 - Nothing changes in how the kit works. The code is now checked automatically for common

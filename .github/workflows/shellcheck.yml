@@ -3,9 +3,12 @@ name: shellcheck
 
 on:
   push:
-    # A release pushes the commit and its tag together; the tag is the same code, so skip it.
-    tags-ignore: ['**']
+    # Branches only. A release pushes its tag too, the same code; naming only branches
+    # leaves tags out. (Naming only tags-ignore left branches out too: it never ran.)
+    branches: ['**']
   pull_request:
+  # A "Run workflow" button on the Actions page, to check by hand without a push.
+  workflow_dispatch:
 
 permissions:
   contents: read
