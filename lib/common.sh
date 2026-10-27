@@ -1,4 +1,6 @@
 # common.sh - helpers shared by the bpd-* scripts. Sourced, not run.
+# shellcheck shell=bash
+# shellcheck disable=SC2034  # its settings and parsed fields are read by the scripts that source it
 
 CONF_DIR="${BPD_CONF_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/bpd-backup}"
 
@@ -52,6 +54,7 @@ load_settings() {
         [[ $line == *=* ]] || { LOAD_ERR="$file:$n: expected key = value"; return 1; }
         key=${line%%=*}; key=${key%"${key##*[![:space:]]}"}
         val=${line#*=};  val=${val#"${val%%[![:space:]]*}"}
+        # shellcheck disable=SC2088  # a literal ~ typed in the conf, expanded here
         [[ $val == "~" || $val == "~/"* ]] && val="$HOME${val#\~}"
         case $key in
             state_dir|cache_dir|local_root|menu_file)
@@ -189,6 +192,7 @@ load_set() {
         [[ $line == *=* ]] || { LOAD_ERR="$file:$n: expected key = value"; return 1; }
         key=${line%%=*}; key=${key%"${key##*[![:space:]]}"}
         val=${line#*=};  val=${val#"${val%%[![:space:]]*}"}
+        # shellcheck disable=SC2088  # a literal ~ typed in the conf, expanded here
         [[ $val == "~" || $val == "~/"* ]] && val="$HOME${val#\~}"
         case $key in
             source)     SET_SOURCE=${val%/} ;;

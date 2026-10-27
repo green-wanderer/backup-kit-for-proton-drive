@@ -62,6 +62,7 @@ done
 if [[ -z $SET ]]; then
     best=-1
     for s in $(list_sets); do
+        # shellcheck disable=SC2015  # skip the set if either fails: intended
         load_set "$s" && (( SET_DRILL_DAYS > 0 )) || continue
         read_drill "$s"
         age=$(days_since "$DR_passed"); age=${age:-99999}

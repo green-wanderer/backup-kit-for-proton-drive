@@ -1,5 +1,7 @@
 # backup-kit-for-proton-drive
 
+[![shellcheck](https://github.com/green-wanderer/backup-kit-for-proton-drive/actions/workflows/shellcheck.yml/badge.svg)](https://github.com/green-wanderer/backup-kit-for-proton-drive/actions/workflows/shellcheck.yml)
+
 Automatic, encrypted backups of a Linux folder to Proton Drive, using the
 [Proton Drive CLI](https://proton.me/download/drive/cli/index.html). It backs up
 daily, keeps a set of older copies, warns you when something is wrong, and tests

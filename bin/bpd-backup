@@ -133,7 +133,7 @@ check_forbid() { # INDEX_FILE
 }
 
 make_archive() {
-    local rc ext idx="$CACHE_DIR/$SET.index"
+    local pipe_rc ext idx="$CACHE_DIR/$SET.index"
     [[ -d $SET_SOURCE ]] || fail "source $SET_SOURCE does not exist"
     mkdir -p "$CACHE_DIR" || fail "cannot create $CACHE_DIR"
     SET_SOURCE=$(readlink -f -- "$SET_SOURCE")
@@ -185,6 +185,7 @@ make_archive() {
             key=$(sed -n 's/^[[:space:]]*identity[[:space:]]*=[[:space:]]*//p' "$f" 2>/dev/null | tail -1)
             key=${key%"${key##*[![:space:]]}"}
             [[ -n $key ]] || continue
+            # shellcheck disable=SC2088  # a literal ~ typed in the conf, expanded here
             [[ $key == "~/"* ]] && key="$HOME${key#\~}"
             key=$(readlink -f -- "$key" 2>/dev/null) || continue
             [[ $key == "$SET_SOURCE"/* ]] || continue
@@ -200,14 +201,14 @@ make_archive() {
             tar -C "$SET_SOURCE" "${excl[@]}" -cvf - --index-file="$idx" . 2>>"$LOG" |
                 zstd -q -T0 -"$ZSTD_LEVEL" >"$TMP"
         fi
-        rc=("${PIPESTATUS[@]}")
+        pipe_rc=("${PIPESTATUS[@]}")
         # tar exits 1 when a file changed while it was read. On a live home folder
         # that happens most days and the archive is still good.
-        if (( rc[0] > 1 || rc[1] != 0 || ${rc[2]:-0} != 0 )); then
+        if (( pipe_rc[0] > 1 || pipe_rc[1] != 0 || ${pipe_rc[2]:-0} != 0 )); then
             rm -f -- "$TMP"
-            fail "archive pipeline failed (tar=${rc[0]} zstd=${rc[1]}${rc[2]:+ age=${rc[2]}}), see $LOG"
+            fail "archive pipeline failed (tar=${pipe_rc[0]} zstd=${pipe_rc[1]}${pipe_rc[2]:+ age=${pipe_rc[2]}}), see $LOG"
         fi
-        (( rc[0] == 1 )) && log "note: some files changed while being read (see $LOG)"
+        (( pipe_rc[0] == 1 )) && log "note: some files changed while being read (see $LOG)"
         check_forbid "$idx"
     fi
 

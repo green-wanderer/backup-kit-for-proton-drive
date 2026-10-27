@@ -1,5 +1,10 @@
 # Changelog
 
+## 2.1.1 (2026-10-27)
+
+- Nothing changes in how the kit works. The code is now checked automatically for common
+  scripting mistakes on every update (the badge at the top of the README).
+
 ## 2.1.0 (2026-10-26)
 
 - `flock` is required: `bpd-backup` refuses to run without it (a failed status and a

@@ -1,0 +1,21 @@
+# Lints every shell script on each push and pull request; the README badge shows the result.
+name: shellcheck
+
+on:
+  push:
+    # A release pushes the commit and its tag together; the tag is the same code, so skip it.
+    tags-ignore: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  shellcheck:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run ShellCheck
+        run: |
+          shellcheck --version
+          shellcheck bin/* install.sh lib/common.sh

@@ -49,6 +49,7 @@ else
     [[ $SET =~ ^[A-Za-z0-9-]+$ ]] || die "bad set name '$SET'"
     [[ -z $FROM ]] || die "no config for $SET, so there is no local or mirror copy to use"
     say "No config for $SET here; looking on Drive."
+    # shellcheck disable=SC2034  # SET_NAME is read by the common.sh helpers
     SET_NAME=$SET SET_PUSH=yes SET_DRIVE="$DRIVE_ROOT/backups/$SET" SET_IDENTITY="" SET_MIRROR=""
 fi
 [[ -n $KEY ]] && SET_IDENTITY=$KEY

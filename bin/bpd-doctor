@@ -57,11 +57,14 @@ else
     fix "proton-drive is missing. Download the Linux version from $CLI_URL,
         then run: bash $(readlink -f "$HERE/..")/install.sh (it finds and installs it)"
 fi
+# shellcheck disable=SC2043  # the list of optional tools, one entry so far
 for t in notify-send; do
-    command -v "$t" >/dev/null && ok "$t" || { note "$t is missing (optional)"; missing+=("$(pkg "$t")"); }
+    if command -v "$t" >/dev/null; then ok "$t"
+    else note "$t is missing (optional)"; missing+=("$(pkg "$t")"); fi
 done
 (( ${#missing[@]} )) && say "  To install: $(install_hint "${missing[@]}")"
 
+# shellcheck disable=SC2088  # ~ is the text the user reads, not a path
 case ":$PATH:" in
     *":$HOME/.local/bin:"*) ;;
     *) note "~/.local/bin is not on your PATH; open a new terminal, or run: bash install.sh" ;;

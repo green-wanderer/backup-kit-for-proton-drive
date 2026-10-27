@@ -67,6 +67,7 @@ done
 
 def=~; [[ $SET == home ]] || def=""
 SOURCE=${2:-$(ask "Folder to back up:" "${def:-~/Documents}")}
+# shellcheck disable=SC2088  # a literal ~ typed at the prompt, expanded here
 [[ $SOURCE == "~" || $SOURCE == "~/"* ]] && SOURCE="$HOME${SOURCE#\~}"
 SOURCE=$(readlink -f -- "$SOURCE") || die "no such folder"
 [[ -d $SOURCE ]] || die "$SOURCE is not a folder"
@@ -162,9 +163,11 @@ if command -v systemctl >/dev/null && yes_no "Back up automatically every day?" 
         [[ -e $UNITS/$u ]] || cp "$HERE/../examples/systemd/$u" "$UNITS/"
     done
     systemctl --user daemon-reload
-    systemctl --user enable --now "bpd-backup@$SET.timer" bpd-check.timer >/dev/null 2>&1 &&
-        say "On. A desktop notification tells you if a backup needs attention." ||
+    if systemctl --user enable --now "bpd-backup@$SET.timer" bpd-check.timer >/dev/null 2>&1; then
+        say "On. A desktop notification tells you if a backup needs attention."
+    else
         say "Could not turn on the timer. Try: systemctl --user enable --now bpd-backup@$SET.timer"
+    fi
 fi
 
 # 10. warnings in the terminal

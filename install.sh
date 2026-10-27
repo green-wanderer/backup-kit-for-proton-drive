@@ -43,6 +43,7 @@ case ":$PATH:" in
     *)  rc=""
         case ${SHELL##*/} in zsh) rc=~/.zshrc ;; bash) rc=~/.bashrc ;; esac
         if [[ -n $rc ]] && ! grep -qs '\.local/bin' "$rc"; then
+            # shellcheck disable=SC2016  # $HOME and $PATH must reach the rc file unexpanded
             printf '\n# bpd-kit: commands in ~/.local/bin\nexport PATH="$HOME/.local/bin:$PATH"\n' >>"$rc"
             echo "Added ~/.local/bin to your PATH in $rc"
         fi

@@ -1,0 +1,5 @@
+# ShellCheck settings for this repo, read by `shellcheck` run from its root and by CI.
+# The scripts source lib/common.sh through $HERE, so let it follow and find it.
+external-sources=true
+source-path=SCRIPTDIR
+source-path=SCRIPTDIR/../lib
