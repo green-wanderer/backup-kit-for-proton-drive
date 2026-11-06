@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.3 (2026-11-06)
+
+- The README is now a short start page, and the full reference moved to `docs/manual.md`.
+  Nothing changes in how the kit works. If your set's config says every key is in the
+  README, look in the manual instead.
+
 ## 2.1.2 (2026-10-27)
 
 - Nothing changes in how the kit works. The automatic code check (the README badge) now

@@ -120,7 +120,7 @@ KEEP="7 4 6 1"
 # 6. write the config
 mkdir -p "$CONF_DIR/sets"
 {
-    printf '# Made by bpd-init on %s. Every key is explained in the README.\n\n' "$(date +%F)"
+    printf '# Made by bpd-init on %s. Every key is explained in docs/manual.md in the kit.\n\n' "$(date +%F)"
     printf 'source = %s\n' "$SOURCE"
     for x in "${EXCLUDES[@]}"; do printf 'exclude = %s\n' "$x"; done
     printf 'drive  = %s/backups/%s\n' "$DRIVE_ROOT" "$SET"
