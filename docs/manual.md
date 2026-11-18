@@ -62,6 +62,7 @@ These examples cover the other kinds of set:
 | `recipients`, `identity` | the age public key to encrypt with, and the private key that drills and restores decrypt with. Leave both out for no encryption of your own |
 | `keep` | retention on Drive: copies per day, week, month, year (default `7 4 6 1`) |
 | `keep_local` | local copies to keep (default 3) |
+| `keep_mirror` | copies to keep on the mirror, newest first; 0 = use `keep` there too (default: `default_keep_mirror`, 0) |
 | `stale_days` | `bpd-check` warns after this many days without a run; 0 = never (for sets you run by hand) |
 | `drill_days` | days between test restores; 0 = never remind (default: the setting) |
 | `drill_pick` | which archive a test restore takes: `oldest` or `newest` (default: the setting) |
@@ -133,8 +134,10 @@ systemctl --user enable --now bpd-mirror.timer        # only if you use mirror =
 ## The mirror
 
 `bpd-mirror` copies each set's archives into its `mirror =` folder on a second disk,
-compares sha256 after each copy, and applies the set's `keep` there (retired
-copies go to `.trash` in that folder). Mark the disk once, with it mounted:
+compares sha256 after each copy, and applies the set's `keep` there. With `keep_mirror = N`
+(or `default_keep_mirror` in `settings.conf`) it copies and keeps only the newest N instead:
+Drive holds the history, the disk the latest. Retired copies go to `.trash` in that folder,
+which holds only what the last prune retired. Mark the disk once, with it mounted:
 
 ```sh
 bpd-mirror --init /mnt/backup-disk

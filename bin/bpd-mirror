@@ -6,7 +6,8 @@
 #
 # For every set with mirror = DIR (or just the SETs named): copies the local
 # archives the mirror does not have yet, compares sha256 after each copy, then
-# applies the set's keep tiers to the mirror with bpd-prune --mirror.
+# applies the set's keep tiers to the mirror with bpd-prune --mirror. With
+# keep_mirror = N it copies and keeps only the newest N.
 #
 # A mirror folder is only written to below a .bpd-mirror marker. Make one with
 # --init on the mounted drive, so an unmounted drive's empty mount point is never filled.
@@ -44,27 +45,30 @@ for s in "${sets[@]}"; do
     fi
     (( DRY )) || mkdir -p "$SET_MIRROR" || { record "$s" FAIL "cannot create $SET_MIRROR"; failed=1; continue; }
 
-    copied=0 bad=""
+    copied=0 bad="" why=""
     while IFS= read -r name; do
         [[ -e $SET_MIRROR/$name ]] && continue
         grep -qxF -- "$name" "$STATE_DIR/$s.mirror-retired" 2>/dev/null && continue
         if (( DRY )); then say "$s: would copy $name"; continue; fi
         tmp="$SET_MIRROR/.partial-$name"
-        if cp -- "$SET_LOCAL/$name" "$tmp" &&
-           [[ $(sha256sum <"$tmp") == "$(sha256sum <"$SET_LOCAL/$name")" ]]; then
-            mv -f -- "$tmp" "$SET_MIRROR/$name"
-            copied=$((copied + 1))
-        else
+        if ! err=$(cp -- "$SET_LOCAL/$name" "$tmp" 2>&1); then
+            why="could not be copied: ${err##*: }"
+        elif [[ $(sha256sum <"$tmp") != "$(sha256sum <"$SET_LOCAL/$name")" ]]; then
+            why="did not match the original"
+        fi
+        if [[ -n $why ]]; then
             rm -f -- "$tmp"
             bad=$name
             break
         fi
-    done < <(local_archives "$SET_LOCAL" "$s")
+        mv -f -- "$tmp" "$SET_MIRROR/$name"
+        copied=$((copied + 1))
+    done < <(local_archives "$SET_LOCAL" "$s" | if (( SET_KEEP_MIRROR )); then tail -n "$SET_KEEP_MIRROR"; else cat; fi)
 
     if [[ -n $bad ]]; then
-        say "$s: FAILED copying $bad (the copy did not match)"
-        record "$s" FAIL "copy of $bad did not match"
-        notify critical "Mirror failed: $s" "The copy of $bad did not match the original."
+        say "$s: FAILED copying $bad ($why)"
+        record "$s" FAIL "copy of $bad $why"
+        notify critical "Mirror failed: $s" "The copy of $bad $why."
         failed=1
         continue
     fi

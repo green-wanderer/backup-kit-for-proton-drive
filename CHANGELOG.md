@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.2.0 (2026-11-18)
+
+- New `keep_mirror = N` (or `default_keep_mirror` for all sets): keep only the newest N
+  archives on the mirror disk. Unset, the mirror follows `keep` as before.
+- The mirror's `.trash` no longer grows until the disk is full; it keeps only the last prune's.
+- A failed mirror copy now says why, such as "No space left on device".
+
 ## 2.1.3 (2026-11-06)
 
 - The README is now a short start page, and the full reference moved to `docs/manual.md`.

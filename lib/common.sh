@@ -18,6 +18,7 @@ MENU_PER_LEVEL=60
 DEFAULT_STALE_DAYS=2
 DEFAULT_KEEP="7 4 6 1"
 DEFAULT_KEEP_LOCAL=3
+DEFAULT_KEEP_MIRROR=0
 ZSTD_LEVEL=3
 LOG_MAX_KB=1024
 PRUNE_MAX=30
@@ -80,7 +81,7 @@ load_settings() {
                 [[ $val =~ ^[1-9][0-9]*[smhd]?$ ]] || { LOAD_ERR="$file:$n: $key is a duration like 90s, 30m or 2h"; return 1; } ;;
             menu_depth|menu_max|menu_per_level|default_keep_local|prune_max|drill_sample|log_max_kb)
                 [[ $val =~ ^[1-9][0-9]*$ ]] || { LOAD_ERR="$file:$n: $key must be a whole number above 0"; return 1; } ;;
-            default_stale_days|drill_days|drill_confirm_mb|drill_spare_mb|mirror_stale_days)
+            default_stale_days|default_keep_mirror|drill_days|drill_confirm_mb|drill_spare_mb|mirror_stale_days)
                 [[ $val =~ ^[0-9]+$ ]] || { LOAD_ERR="$file:$n: $key must be a whole number"; return 1; } ;;
             *) LOAD_ERR="$file:$n: unknown setting '$key'"; return 1 ;;
         esac
@@ -180,6 +181,7 @@ load_set() {
 
     SET_NAME=$1 SET_SOURCE="" SET_DRIVE="" SET_RECIPIENTS="" SET_IDENTITY=""
     SET_LOCAL="$LOCAL_ROOT/$1" SET_STALE_DAYS=$DEFAULT_STALE_DAYS SET_KEEP_LOCAL=$DEFAULT_KEEP_LOCAL
+    SET_KEEP_MIRROR=$DEFAULT_KEEP_MIRROR
     read -ra SET_KEEP <<<"$DEFAULT_KEEP"; SET_EXCLUDE=()
     SET_BEFORE="" SET_MODE=tar SET_MATCH="" SET_ON_CHANGE=no SET_PUSH=yes SET_MIRROR="" SET_SCRATCH=no
     SET_REQUIRE=() SET_FORBID=() SET_CHECK="" SET_DRILL_DAYS=$DRILL_DAYS SET_DRILL_PICK=$DRILL_PICK
@@ -221,6 +223,9 @@ load_set() {
             keep_local)
                 [[ $val =~ ^[0-9]+$ ]] || { LOAD_ERR="$file:$n: keep_local must be a whole number"; return 1; }
                 SET_KEEP_LOCAL=$val ;;
+            keep_mirror)
+                [[ $val =~ ^[0-9]+$ ]] || { LOAD_ERR="$file:$n: keep_mirror must be a whole number"; return 1; }
+                SET_KEEP_MIRROR=$val ;;
             drill_days)
                 [[ $val =~ ^[0-9]+$ ]] || { LOAD_ERR="$file:$n: drill_days must be a whole number"; return 1; }
                 SET_DRILL_DAYS=$val ;;
